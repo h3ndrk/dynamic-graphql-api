@@ -76,7 +76,27 @@ func newField(column parse.Column, tableConstraints []parse.TableConstraint) (*F
 	}
 
 	for _, constraint := range tableConstraints {
-		if constraint.Type == parse.TableConstraintTypeForeignKey && len(constraint.ForeignKeyColumns) == 1 && constraint.ForeignKeyColumns[0] == *column.Name && constraint.ForeignKey != nil && constraint.ForeignKey.Table != nil && len(constraint.ForeignKey.Columns) == 1 {
+		// check for primary key
+		if constraint.Type == parse.TableConstraintTypePrimaryKey &&
+			len(constraint.IndexedColumns) == 1 &&
+			constraint.IndexedColumns[0].Name != nil &&
+			column.Name != nil &&
+			*constraint.IndexedColumns[0].Name == *column.Name {
+
+			field.tableConstraint = constraint
+			field.AssociationType = Identification
+			break
+		}
+
+		// check for foreign key
+		if constraint.Type == parse.TableConstraintTypeForeignKey &&
+			len(constraint.ForeignKeyColumns) == 1 &&
+			column.Name != nil &&
+			constraint.ForeignKeyColumns[0] == *column.Name &&
+			constraint.ForeignKey != nil &&
+			constraint.ForeignKey.Table != nil &&
+			len(constraint.ForeignKey.Columns) == 1 {
+
 			field.tableConstraint = constraint
 			field.AssociationType = OneToOne
 			field.Association = *constraint.ForeignKey.Table
