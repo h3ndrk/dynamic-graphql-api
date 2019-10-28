@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,6 +10,13 @@ import (
 	"github.com/graphql-go/handler"
 	"github.com/h3ndrk/dynamic-graphql-sqlite/associations"
 )
+
+func responsePathToString(path *graphql.ResponsePath) string {
+	if path.Prev != nil {
+		return fmt.Sprintf("%s.%v", responsePathToString(path.Prev), path.Key)
+	}
+	return fmt.Sprintf("%v", path.Key)
+}
 
 func main() {
 	a, err := associations.Evaluate([]string{
@@ -30,13 +38,15 @@ func main() {
 
 	// add fields second to break circular dependencies
 	for _, obj := range a.Objects {
-		for _, field := range obj.Fields {
+		currentObj := obj
+		for _, field := range currentObj.Fields {
+			currentField := field // fix closure
 			var objFieldType graphql.Output
-			switch field.AssociationType {
+			switch currentField.AssociationType {
 			case associations.Identification:
-				objFieldType = graphql.ID
+				objFieldType = graphql.NewNonNull(graphql.ID)
 			case associations.Scalar:
-				switch field.Association {
+				switch currentField.Association {
 				case "INTEGER":
 					objFieldType = graphql.Int
 				case "TEXT", "BLOB":
@@ -47,25 +57,49 @@ func main() {
 					panic("unsupported type")
 				}
 			case associations.OneToOne, associations.OneToMany:
-				objFieldType = graphqlObjects[field.Association]
+				objFieldType = graphqlObjects[currentField.Association]
 			case associations.ManyToOne, associations.ManyToMany:
-				objFieldType = graphql.NewList(graphql.NewNonNull(graphqlObjects[field.Association]))
+				objFieldType = graphql.NewList(graphql.NewNonNull(graphqlObjects[currentField.Association]))
 			default:
 				panic("unsupported type")
 			}
 
-			if field.NonNull {
+			if currentField.NonNull {
 				objFieldType = graphql.NewNonNull(objFieldType)
 			}
 
-			graphqlObjects[obj.Name].AddFieldConfig(field.Name, &graphql.Field{
+			graphqlObjects[currentObj.Name].AddFieldConfig(currentField.Name, &graphql.Field{
 				Type: objFieldType,
-				// TODO: Resolve
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					fmt.Printf("resolve field: %s\n", responsePathToString(p.Info.Path))
+					fmt.Printf("association type: %s\n", currentField.AssociationType)
+					switch currentField.AssociationType {
+					case associations.Identification:
+						fmt.Printf("Returning ID ...\n")
+						return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s.%s:%d", currentObj.Name, currentField.Name, 42))), nil
+					// case associations.Scalar:
+					// 	switch currentField.Association {
+					// 	case "INTEGER":
+					// 		objFieldType = graphql.Int
+					// 	case "TEXT", "BLOB":
+					// 		objFieldType = graphql.String
+					// 	case "REAL", "NUMERIC":
+					// 		objFieldType = graphql.Float
+					// 	default:
+					// 		panic("unsupported type")
+					// 	}
+					// case associations.OneToOne, associations.OneToMany:
+					// 	objFieldType = graphqlObjects[currentField.Association]
+					// case associations.ManyToOne, associations.ManyToMany:
+					// 	objFieldType = graphql.NewList(graphql.NewNonNull(graphqlObjects[currentField.Association]))
+					default:
+						fmt.Printf("Returning null ...\n")
+						return nil, nil
+					}
+				},
 			})
 		}
 	}
-
-	fmt.Printf("%+v\n", graphqlObjects)
 
 	query := graphql.NewObject(graphql.ObjectConfig{
 		Name:   "Query",
@@ -74,7 +108,9 @@ func main() {
 	for name, obj := range graphqlObjects {
 		query.AddFieldConfig(name, &graphql.Field{
 			Type: obj,
-			// TODO: Resolve
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				return 42, nil
+			},
 		})
 	}
 
