@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/handler"
-	"github.com/h3ndrk/dynamic-graphql-sqlite/associations"
+	"github.com/h3ndrk/dynamic-graphql-api/associations"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 func responsePathToString(path *graphql.ResponsePath) string {
@@ -18,11 +22,62 @@ func responsePathToString(path *graphql.ResponsePath) string {
 	return fmt.Sprintf("%v", path.Key)
 }
 
-func main() {
-	a, err := associations.Evaluate([]string{
-		"CREATE TABLE as (id INTEGER PRIMARY KEY, b_id INTEGER REFERENCES bs(id));",
-		"CREATE TABLE bs (id INTEGER PRIMARY KEY, a_id INTEGER REFERENCES as(id));",
+type key int
+
+const (
+	KeyDB key = iota
+)
+
+func getDBFromContext(ctx context.Context) (*sql.DB, error) {
+	db, ok := ctx.Value(KeyDB).(*sql.DB)
+	if !ok {
+		return nil, errors.New("Missing DB in context")
+	}
+
+	return db, nil
+}
+
+func httpDBMiddleware(db *sql.DB, h *handler.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ContextHandler(context.WithValue(r.Context(), KeyDB, db), w, r)
 	})
+}
+
+func main() {
+	db, err := sql.Open("sqlite3", "test.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	sqlRows, err := db.Query(
+		"SELECT sql FROM sqlite_master WHERE type = 'table'",
+	)
+	if err != nil {
+		panic(err)
+	}
+	defer sqlRows.Close()
+
+	var (
+		sql  string
+		sqls []string
+	)
+	for sqlRows.Next() {
+		err := sqlRows.Scan(&sql)
+		if err != nil {
+			panic(err)
+		}
+
+		sqls = append(sqls, sql)
+	}
+
+	if err := sqlRows.Err(); err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("%+v\n", sqls)
+
+	a, err := associations.Evaluate(sqls)
 	if err != nil {
 		panic(err)
 	}
@@ -196,7 +251,7 @@ func main() {
 		Playground: true,
 	})
 
-	http.Handle("/graphql", h)
+	http.Handle("/graphql", httpDBMiddleware(db, h))
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
 
