@@ -36,7 +36,7 @@ func TestAssociations(t *testing.T) {
 				Fields: []Field{
 					Field{
 						Name:            "id",
-						AssociationType: Index,
+						AssociationType: Identification,
 						Association:     "INTEGER",
 						NonNull:         false,
 					},
@@ -53,7 +53,7 @@ func TestAssociations(t *testing.T) {
 				Fields: []Field{
 					Field{
 						Name:            "id",
-						AssociationType: Index,
+						AssociationType: Identification,
 						Association:     "INTEGER",
 						NonNull:         false,
 					},
@@ -70,7 +70,7 @@ func TestAssociations(t *testing.T) {
 				Fields: []Field{
 					Field{
 						Name:            "id",
-						AssociationType: Index,
+						AssociationType: Identification,
 						Association:     "INTEGER",
 						NonNull:         false,
 					},
@@ -87,7 +87,7 @@ func TestAssociations(t *testing.T) {
 				Fields: []Field{
 					Field{
 						Name:            "id",
-						AssociationType: Index,
+						AssociationType: Identification,
 						Association:     "INTEGER",
 						NonNull:         false,
 					},
@@ -104,7 +104,7 @@ func TestAssociations(t *testing.T) {
 				Fields: []Field{
 					Field{
 						Name:            "id",
-						AssociationType: Index,
+						AssociationType: Identification,
 						Association:     "INTEGER",
 						NonNull:         false,
 					},
@@ -121,7 +121,7 @@ func TestAssociations(t *testing.T) {
 				Fields: []Field{
 					Field{
 						Name:            "id",
-						AssociationType: Index,
+						AssociationType: Identification,
 						Association:     "INTEGER",
 						NonNull:         false,
 					},
@@ -138,7 +138,7 @@ func TestAssociations(t *testing.T) {
 				Fields: []Field{
 					Field{
 						Name:            "id",
-						AssociationType: Index,
+						AssociationType: Identification,
 						Association:     "INTEGER",
 						NonNull:         false,
 					},
@@ -155,7 +155,7 @@ func TestAssociations(t *testing.T) {
 				Fields: []Field{
 					Field{
 						Name:            "id",
-						AssociationType: Index,
+						AssociationType: Identification,
 						Association:     "INTEGER",
 						NonNull:         false,
 					},

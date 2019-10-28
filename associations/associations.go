@@ -8,115 +8,28 @@ import (
 	"github.com/pkg/errors"
 )
 
-// type reference struct {
-// 	sourceColumn string
-// 	targetTable  string
-// 	targetColumn string
-// }
-
-// func getReferencesFromStmt(stmt *parse.Table) []reference {
-// 	var references []reference
-
-// 	for _, column := range stmt.Columns {
-// 		if column.Name != nil && column.ForeignKey != nil && column.ForeignKey.Table != nil && len(column.ForeignKey.Columns) == 1 {
-// 			references = append(references, reference{
-// 				sourceColumn: *column.Name,
-// 				targetTable:  *column.ForeignKey.Table,
-// 				targetColumn: column.ForeignKey.Columns[0],
-// 			})
-// 		}
-// 	}
-
-// 	for _, constraint := range stmt.TableConstraints {
-// 		if constraint.Type == parse.TableConstraintTypeForeignKey && len(constraint.ForeignKeyColumns) == 1 && constraint.ForeignKey != nil && constraint.ForeignKey.Table != nil && len(constraint.ForeignKey.Columns) == 1 {
-// 			references = append(references, reference{
-// 				sourceColumn: constraint.ForeignKeyColumns[0],
-// 				targetTable:  *constraint.ForeignKey.Table,
-// 				targetColumn: constraint.ForeignKey.Columns[0],
-// 			})
-// 		}
-// 	}
-
-// 	return references
-// }
-
-// type column struct {
-// 	name         string
-// 	typeAffinity string
-// 	notNull      bool
-// }
-
-// func getColumnsFromStmt(stmt *parse.Table) []column {
-// 	var columns []column
-
-// 	for _, c := range stmt.Columns {
-// 		if c.Name != nil {
-// 			var typeAffinity string
-// 			if c.Type != nil {
-// 				typeAffinity = *c.Type
-// 			}
-// 			columns = append(columns, column{
-// 				name:         *c.Name,
-// 				typeAffinity: typeAffinity,
-// 				notNull:      c.NotNull,
-// 			})
-// 		}
-// 	}
-
-// 	return columns
-// }
-
-// func isJoinedTable(stmt *parse.Table) bool {
-// 	// check if the table has 2 columns
-// 	columns := getColumnsFromStmt(stmt)
-// 	if len(columns) != 2 {
-// 		return false
-// 	}
-
-// 	// check if the table has 2 references
-// 	references := getReferencesFromStmt(stmt)
-// 	if len(references) != 2 {
-// 		return false
-// 	}
-
-// 	// check that both columns have each one reference
-// 	firstColumnReferenceCount := 0
-// 	secondColumnReferenceCount := 0
-// 	for _, r := range references {
-// 		if r.sourceColumn == columns[0].name {
-// 			firstColumnReferenceCount++
-// 		}
-// 		if r.sourceColumn == columns[1].name {
-// 			secondColumnReferenceCount++
-// 		}
-// 	}
-// 	if firstColumnReferenceCount != 1 || secondColumnReferenceCount != 1 {
-// 		return false
-// 	}
-
-// 	// check that both references target different tables
-// 	if references[0].targetTable == references[1].targetTable {
-// 		return false
-// 	}
-
-// 	return true
-// }
-
+// AssociationType represents the type of a association
 type AssociationType int
 
 const (
-	Index AssociationType = iota
+	// Identification means that the field holds an identifier
+	Identification AssociationType = iota
+	// Scalar means that the field holds a normal scalar
 	Scalar
+	// OneToOne means that the field associates a one-to-one association
 	OneToOne
+	// OneToMany means that the field associates a one-to-many association
 	OneToMany
+	// ManyToOne means that the field associates a many-to-one association
 	ManyToOne
+	// ManyToMany means that the field associates a many-to-many association
 	ManyToMany
 )
 
 func (a AssociationType) String() string {
 	switch a {
-	case Index:
-		return "Index"
+	case Identification:
+		return "Identification"
 	case Scalar:
 		return "Scalar"
 	case OneToOne:
@@ -131,6 +44,7 @@ func (a AssociationType) String() string {
 	return ""
 }
 
+// Field represents an object field which holds either a identification, scalar or object association
 type Field struct {
 	column          parse.Column
 	tableConstraint parse.TableConstraint
@@ -153,7 +67,7 @@ func newField(column parse.Column, tableConstraints []parse.TableConstraint) (*F
 	}
 
 	if column.PrimaryKey {
-		field.AssociationType = Index
+		field.AssociationType = Identification
 	}
 
 	if column.Name != nil && column.ForeignKey != nil && column.ForeignKey.Table != nil && len(column.ForeignKey.Columns) == 1 {
@@ -177,6 +91,7 @@ func (f Field) String() string {
 	return fmt.Sprintf("Field{Name: %s, AssociationType: %s, Association: %s, NonNull: %t}", f.Name, f.AssociationType, f.Association, f.NonNull)
 }
 
+// Object represents an object which has fields with associations to other objects
 type Object struct {
 	stmt   parse.Table
 	Name   string
@@ -234,10 +149,12 @@ func (o Object) getAssociatedObjects() []string {
 	return nil
 }
 
+// Associations holds the list of objects
 type Associations struct {
 	Objects []Object
 }
 
+// Evaluate parses all SQL strings and generates an associated list of objects
 func Evaluate(sqls []string) (*Associations, error) {
 	associations := &Associations{}
 	for _, sql := range sqls {
