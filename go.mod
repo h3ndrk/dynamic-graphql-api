@@ -1,4 +1,4 @@
-module github.com/h3ndrk/dynamic-graphql-sqlite
+module github.com/h3ndrk/dynamic-graphql-api
 
 go 1.13
 
