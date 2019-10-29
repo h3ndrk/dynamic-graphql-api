@@ -82,12 +82,24 @@ func main() {
 		panic(err)
 	}
 
+	node := graphql.NewInterface(graphql.InterfaceConfig{
+		Name: "Node",
+		Fields: graphql.Fields{
+			"id": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.ID),
+			},
+		},
+	})
+
 	graphqlObjects := map[string]*graphql.Object{}
 	// create objects first
 	for _, obj := range a.Objects {
 		graphqlObjects[obj.Name] = graphql.NewObject(graphql.ObjectConfig{
 			Name:   obj.Name,
 			Fields: graphql.Fields{},
+			Interfaces: []*graphql.Interface{
+				node,
+			},
 		})
 	}
 
@@ -168,6 +180,7 @@ func main() {
 			},
 		})
 	}
+	// TODO: query.AddFieldConfig("node", ...) for Node retrieval
 
 	// objFields := graphql.Fields{}
 	// for _, column := range getColumnsFromStmt(stmt) {
