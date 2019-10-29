@@ -105,7 +105,7 @@ func main() {
 
 	// add fields second to break circular dependencies
 	for _, obj := range a.Objects {
-		currentObj := obj
+		currentObj := obj // fix closure
 		for _, field := range currentObj.Fields {
 			currentField := field // fix closure
 			var objFieldType graphql.Output
