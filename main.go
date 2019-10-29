@@ -12,6 +12,7 @@ import (
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/handler"
 	"github.com/h3ndrk/dynamic-graphql-api/associations"
+	"github.com/iancoleman/strcase"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -82,6 +83,8 @@ func main() {
 		panic(err)
 	}
 
+	fmt.Printf("%+v\n", a)
+
 	node := graphql.NewInterface(graphql.InterfaceConfig{
 		Name: "Node",
 		Fields: graphql.Fields{
@@ -91,7 +94,32 @@ func main() {
 		},
 	})
 
+	pageInfo := graphql.NewObject(graphql.ObjectConfig{
+		Name:        "PageInfo",
+		Description: "Information about pagination in a connection.",
+		Fields: graphql.Fields{
+			"hasNextPage": &graphql.Field{
+				Type:        graphql.NewNonNull(graphql.Boolean),
+				Description: "When paginating forwards, are there more items?",
+			},
+			"hasPreviousPage": &graphql.Field{
+				Type:        graphql.NewNonNull(graphql.Boolean),
+				Description: "When paginating backwards, are there more items?",
+			},
+			"startCursor": &graphql.Field{
+				Type:        graphql.String,
+				Description: "When paginating backwards, the cursor to continue.",
+			},
+			"endCursor": &graphql.Field{
+				Type:        graphql.String,
+				Description: "When paginating forwards, the cursor to continue.",
+			},
+		},
+	})
+
 	graphqlObjects := map[string]*graphql.Object{}
+	graphqlEdges := map[string]*graphql.Object{}
+	graphqlConnections := map[string]*graphql.Object{}
 	// create objects first
 	for _, obj := range a.Objects {
 		graphqlObjects[obj.Name] = graphql.NewObject(graphql.ObjectConfig{
@@ -103,12 +131,55 @@ func main() {
 		})
 	}
 
-	// add fields second to break circular dependencies
+	// create edges and connections second
+	for _, obj := range a.Objects {
+		for _, field := range obj.Fields {
+			if field.AssociationType == associations.ManyToOne || field.AssociationType == associations.ManyToMany {
+				if _, ok := graphqlEdges[field.Association]; !ok {
+					graphqlEdges[field.Association] = graphql.NewObject(graphql.ObjectConfig{
+						Name:        field.Association + "Edge",
+						Description: "An edge in a connection.",
+						Fields: graphql.Fields{
+							"node": &graphql.Field{
+								Type:        graphql.NewNonNull(graphqlObjects[obj.Name]),
+								Description: "The item at the end of the edge.",
+							},
+							"cursor": &graphql.Field{
+								Type:        graphql.NewNonNull(graphql.String),
+								Description: "A cursor for use in pagination.",
+							},
+						},
+					})
+				}
+
+				if _, ok := graphqlConnections[field.Association]; !ok {
+					graphqlConnections[field.Association] = graphql.NewObject(graphql.ObjectConfig{
+						Name:        field.Association + "Connection",
+						Description: "A connection to a list of items.",
+						Fields: graphql.Fields{
+							"pageInfo": &graphql.Field{
+								Type:        graphql.NewNonNull(pageInfo),
+								Description: "Information to aid in pagination.",
+							},
+							"edges": &graphql.Field{
+								Type:        graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphqlEdges[field.Association]))),
+								Description: "Information to aid in pagination.",
+							},
+						},
+					})
+				}
+			}
+		}
+	}
+
+	// add fields last to break circular dependencies
 	for _, obj := range a.Objects {
 		currentObj := obj // fix closure
 		for _, field := range currentObj.Fields {
 			currentField := field // fix closure
+
 			var objFieldType graphql.Output
+			fieldName := currentField.Name
 			switch currentField.AssociationType {
 			case associations.Identification:
 				objFieldType = graphql.NewNonNull(graphql.ID)
@@ -125,8 +196,10 @@ func main() {
 				}
 			case associations.OneToOne, associations.OneToMany:
 				objFieldType = graphqlObjects[currentField.Association]
+				fieldName = strcase.ToSnake(currentField.Association)
 			case associations.ManyToOne, associations.ManyToMany:
-				objFieldType = graphql.NewList(graphql.NewNonNull(graphqlObjects[currentField.Association]))
+				objFieldType = graphql.NewNonNull(graphqlConnections[currentField.Association])
+				fieldName = strcase.ToSnake(currentField.Association) + "s"
 			default:
 				panic("unsupported type")
 			}
@@ -135,7 +208,7 @@ func main() {
 				objFieldType = graphql.NewNonNull(objFieldType)
 			}
 
-			graphqlObjects[currentObj.Name].AddFieldConfig(currentField.Name, &graphql.Field{
+			graphqlObjects[currentObj.Name].AddFieldConfig(fieldName, &graphql.Field{
 				Type: objFieldType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					fmt.Printf("resolve field: %s\n", responsePathToString(p.Info.Path))
