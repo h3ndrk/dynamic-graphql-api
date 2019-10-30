@@ -120,7 +120,7 @@ func main() {
 	graphqlObjects := map[string]*graphql.Object{}
 	graphqlEdges := map[string]*graphql.Object{}
 	graphqlConnections := map[string]*graphql.Object{}
-	// create objects first
+	// create objects, edges and connections first
 	for _, obj := range a.Objects {
 		graphqlObjects[obj.Name] = graphql.NewObject(graphql.ObjectConfig{
 			Name:   obj.Name,
@@ -129,47 +129,36 @@ func main() {
 				node,
 			},
 		})
-	}
 
-	// create edges and connections second
-	for _, obj := range a.Objects {
-		for _, field := range obj.Fields {
-			if field.AssociationType == associations.ManyToOne || field.AssociationType == associations.ManyToMany {
-				if _, ok := graphqlEdges[field.Association]; !ok {
-					graphqlEdges[field.Association] = graphql.NewObject(graphql.ObjectConfig{
-						Name:        field.Association + "Edge",
-						Description: "An edge in a connection.",
-						Fields: graphql.Fields{
-							"node": &graphql.Field{
-								Type:        graphql.NewNonNull(graphqlObjects[obj.Name]),
-								Description: "The item at the end of the edge.",
-							},
-							"cursor": &graphql.Field{
-								Type:        graphql.NewNonNull(graphql.String),
-								Description: "A cursor for use in pagination.",
-							},
-						},
-					})
-				}
+		graphqlEdges[obj.Name] = graphql.NewObject(graphql.ObjectConfig{
+			Name:        obj.Name + "Edge",
+			Description: "An edge in a connection.",
+			Fields: graphql.Fields{
+				"node": &graphql.Field{
+					Type:        graphql.NewNonNull(graphqlObjects[obj.Name]),
+					Description: "The item at the end of the edge.",
+				},
+				"cursor": &graphql.Field{
+					Type:        graphql.NewNonNull(graphql.String),
+					Description: "A cursor for use in pagination.",
+				},
+			},
+		})
 
-				if _, ok := graphqlConnections[field.Association]; !ok {
-					graphqlConnections[field.Association] = graphql.NewObject(graphql.ObjectConfig{
-						Name:        field.Association + "Connection",
-						Description: "A connection to a list of items.",
-						Fields: graphql.Fields{
-							"pageInfo": &graphql.Field{
-								Type:        graphql.NewNonNull(pageInfo),
-								Description: "Information to aid in pagination.",
-							},
-							"edges": &graphql.Field{
-								Type:        graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphqlEdges[field.Association]))),
-								Description: "Information to aid in pagination.",
-							},
-						},
-					})
-				}
-			}
-		}
+		graphqlConnections[obj.Name] = graphql.NewObject(graphql.ObjectConfig{
+			Name:        obj.Name + "Connection",
+			Description: "A connection to a list of items.",
+			Fields: graphql.Fields{
+				"pageInfo": &graphql.Field{
+					Type:        graphql.NewNonNull(pageInfo),
+					Description: "Information to aid in pagination.",
+				},
+				"edges": &graphql.Field{
+					Type:        graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphqlEdges[obj.Name]))),
+					Description: "Information to aid in pagination.",
+				},
+			},
+		})
 	}
 
 	// add fields last to break circular dependencies
@@ -245,9 +234,9 @@ func main() {
 		Name:   "Query",
 		Fields: graphql.Fields{},
 	})
-	for name, obj := range graphqlObjects {
-		query.AddFieldConfig(name, &graphql.Field{
-			Type: obj,
+	for name, _ := range graphqlObjects {
+		query.AddFieldConfig(strcase.ToSnake(name)+"s", &graphql.Field{
+			Type: graphql.NewNonNull(graphqlConnections[name]),
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				return 42, nil
 			},
