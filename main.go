@@ -350,10 +350,6 @@ func main() {
 			},
 		})
 
-		// TODO: introduce connection struct with fields pageInfo and edges (ids)
-		// TODO: use that informations in this connection
-		// TODO: add pagination query code to query and build connection struct
-		// TODO: later add input arguments (before, after, first, last)
 		graphqlConnections[currentObj.Name] = graphql.NewObject(graphql.ObjectConfig{
 			Name:        currentObj.Name + "Connection",
 			Description: "A connection to a list of items.",
