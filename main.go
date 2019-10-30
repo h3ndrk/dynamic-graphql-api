@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/graphql-go/graphql"
@@ -209,6 +210,70 @@ func getRowsWithPagination(
 	return rows, begin > 1, end < count+1, nil
 }
 
+func extractIDFromCursor(cursor, objType string) (uint, error) {
+	bytesCursor, err := base64.StdEncoding.DecodeString(cursor)
+	if err != nil {
+		return 0, errors.Errorf("Invalid cursor '%s'", cursor)
+	}
+
+	stringID := strings.TrimPrefix(string(bytesCursor), "SubstanceAllowance:")
+	if stringID == cursor {
+		return 0, errors.Errorf("Invalid cursor '%s'", cursor)
+	}
+
+	uintID, err := strconv.ParseInt(stringID, 10, 0)
+	if err != nil {
+		return 0, errors.Wrapf(err, "Invalid cursor '%s'", cursor)
+	}
+
+	return uint(uintID), nil
+}
+
+func getConnectionArgs(p graphql.ResolveParams, objType string) (*uint, *uint, *uint, *uint, error) {
+	var (
+		before *uint
+		after  *uint
+		first  *uint
+		last   *uint
+	)
+
+	if beforeCursor, ok := p.Args["before"]; ok {
+		id, err := extractIDFromCursor(fmt.Sprintf("%v", beforeCursor), objType)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		before = &id
+	}
+
+	if afterCursor, ok := p.Args["after"]; ok {
+		id, err := extractIDFromCursor(fmt.Sprintf("%v", afterCursor), objType)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		after = &id
+	}
+
+	if firstValue, ok := p.Args["first"]; ok {
+		if firstValue, ok := firstValue.(int); ok {
+			firstValueUint := uint(firstValue)
+			first = &firstValueUint
+		} else {
+			return nil, nil, nil, nil, errors.Errorf("Invalid value first '%v'", firstValue)
+		}
+	}
+
+	if lastValue, ok := p.Args["last"]; ok {
+		if lastValue, ok := lastValue.(int); ok {
+			lastValueUint := uint(lastValue)
+			last = &lastValueUint
+		} else {
+			return nil, nil, nil, nil, errors.Errorf("Invalid value last '%v'", lastValue)
+		}
+	}
+
+	return before, after, first, last, nil
+}
+
 func main() {
 	db, err := sql.Open("sqlite3", "test.db")
 	if err != nil {
@@ -385,6 +450,8 @@ func main() {
 
 			var objFieldType graphql.Output
 			fieldName := currentField.Name
+			var objFieldArgs graphql.FieldConfigArgument
+
 			switch currentField.AssociationType {
 			case associations.Identification:
 				objFieldType = graphql.NewNonNull(graphql.ID)
@@ -405,6 +472,20 @@ func main() {
 			case associations.ManyToOne, associations.ManyToMany:
 				objFieldType = graphql.NewNonNull(graphqlConnections[currentField.Association])
 				fieldName = strcase.ToSnake(currentField.Association) + "s"
+				objFieldArgs = graphql.FieldConfigArgument{
+					"before": &graphql.ArgumentConfig{
+						Type: graphql.String,
+					},
+					"after": &graphql.ArgumentConfig{
+						Type: graphql.String,
+					},
+					"first": &graphql.ArgumentConfig{
+						Type: graphql.Int,
+					},
+					"last": &graphql.ArgumentConfig{
+						Type: graphql.Int,
+					},
+				}
 			default:
 				panic("unsupported type")
 			}
@@ -417,6 +498,7 @@ func main() {
 
 			graphqlObjects[currentObj.Name].AddFieldConfig(fieldName, &graphql.Field{
 				Type: objFieldType,
+				Args: objFieldArgs,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					id, ok := p.Source.(uint)
 					if !ok {
@@ -518,32 +600,11 @@ func main() {
 							return nil, err
 						}
 
-						var before *uint
-						// if args.Before != "" {
-						// 	id, err := substanceCursorToID(substanceCursor(args.Before))
-						// 	if err != nil {
-						// 		return nil, err
-						// 	}
-						// 	before = &id
-						// }
-						var after *uint
-						// if args.After != "" {
-						// 	id, err := substanceCursorToID(substanceCursor(args.After))
-						// 	if err != nil {
-						// 		return nil, err
-						// 	}
-						// 	after = &id
-						// }
-						var first *uint
-						// if args.First != -1 {
-						// 	firstUint := uint(args.First)
-						// 	first = &firstUint
-						// }
-						var last *uint
-						// if args.Last != -1 {
-						// 	lastUint := uint(args.Last)
-						// 	last = &lastUint
-						// }
+						before, after, first, last, err := getConnectionArgs(p, currentObj.Name)
+						if err != nil {
+							return nil, err
+						}
+
 						if currentField.ForeignField == nil {
 							return nil, errors.New("Malformed association (foreign field)")
 						}
@@ -590,32 +651,11 @@ func main() {
 							return nil, err
 						}
 
-						var before *uint
-						// if args.Before != "" {
-						// 	id, err := substanceCursorToID(substanceCursor(args.Before))
-						// 	if err != nil {
-						// 		return nil, err
-						// 	}
-						// 	before = &id
-						// }
-						var after *uint
-						// if args.After != "" {
-						// 	id, err := substanceCursorToID(substanceCursor(args.After))
-						// 	if err != nil {
-						// 		return nil, err
-						// 	}
-						// 	after = &id
-						// }
-						var first *uint
-						// if args.First != -1 {
-						// 	firstUint := uint(args.First)
-						// 	first = &firstUint
-						// }
-						var last *uint
-						// if args.Last != -1 {
-						// 	lastUint := uint(args.Last)
-						// 	last = &lastUint
-						// }
+						before, after, first, last, err := getConnectionArgs(p, currentObj.Name)
+						if err != nil {
+							return nil, err
+						}
+
 						if currentField.JoinTable == nil {
 							return nil, errors.New("Malformed association (join table)")
 						}
@@ -675,41 +715,34 @@ func main() {
 		Name:   "Query",
 		Fields: graphql.Fields{},
 	})
-	for name, _ := range graphqlObjects {
+	for name := range graphqlObjects {
 		query.AddFieldConfig(strcase.ToSnake(name)+"s", &graphql.Field{
 			Type: graphql.NewNonNull(graphqlConnections[name]),
+			Args: graphql.FieldConfigArgument{
+				"before": &graphql.ArgumentConfig{
+					Type: graphql.String,
+				},
+				"after": &graphql.ArgumentConfig{
+					Type: graphql.String,
+				},
+				"first": &graphql.ArgumentConfig{
+					Type: graphql.Int,
+				},
+				"last": &graphql.ArgumentConfig{
+					Type: graphql.Int,
+				},
+			},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				db, err := getDBFromContext(p.Context)
 				if err != nil {
 					return nil, err
 				}
 
-				var before *uint
-				// if args.Before != "" {
-				// 	id, err := substanceCursorToID(substanceCursor(args.Before))
-				// 	if err != nil {
-				// 		return nil, err
-				// 	}
-				// 	before = &id
-				// }
-				var after *uint
-				// if args.After != "" {
-				// 	id, err := substanceCursorToID(substanceCursor(args.After))
-				// 	if err != nil {
-				// 		return nil, err
-				// 	}
-				// 	after = &id
-				// }
-				var first *uint
-				// if args.First != -1 {
-				// 	firstUint := uint(args.First)
-				// 	first = &firstUint
-				// }
-				var last *uint
-				// if args.Last != -1 {
-				// 	lastUint := uint(args.Last)
-				// 	last = &lastUint
-				// }
+				before, after, first, last, err := getConnectionArgs(p, name)
+				if err != nil {
+					return nil, err
+				}
+
 				rows, hasPreviousPage, hasNextPage, err := getRowsWithPagination(
 					p.Context, db, before, after, first, last,
 					"SELECT id FROM "+name)
