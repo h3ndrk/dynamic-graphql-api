@@ -225,16 +225,16 @@ func main() {
 	defer sqlRows.Close()
 
 	var (
-		sql  string
-		sqls []string
+		sqlString string
+		sqls      []string
 	)
 	for sqlRows.Next() {
-		err := sqlRows.Scan(&sql)
+		err := sqlRows.Scan(&sqlString)
 		if err != nil {
 			panic(err)
 		}
 
-		sqls = append(sqls, sql)
+		sqls = append(sqls, sqlString)
 	}
 
 	if err := sqlRows.Err(); err != nil {
@@ -424,24 +424,69 @@ func main() {
 					if !ok {
 						return nil, errors.New("Malformed source")
 					}
-					fmt.Printf("%s.%s.p.Source: %+v\n", currentObj.Name, fieldName, p.Source)
-					fmt.Printf("resolve field: %s\n", responsePathToString(p.Info.Path))
-					fmt.Printf("association type: %s\n", currentField.AssociationType)
+
 					switch currentField.AssociationType {
 					case associations.Identification:
-						fmt.Printf("Returning ID ...\n")
 						return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentObj.Name, id))), nil
-					// case associations.Scalar:
-					// 	switch currentField.Association {
-					// 	case "INTEGER":
-					// 		objFieldType = graphql.Int
-					// 	case "TEXT", "BLOB":
-					// 		objFieldType = graphql.String
-					// 	case "REAL", "NUMERIC":
-					// 		objFieldType = graphql.Float
-					// 	default:
-					// 		panic("unsupported type")
-					// 	}
+					case associations.Scalar:
+						switch currentField.Association {
+						case "INTEGER":
+							db, err := getDBFromContext(p.Context)
+							if err != nil {
+								return nil, err
+							}
+
+							var (
+								value sql.NullInt64
+							)
+							if err := db.QueryRow("SELECT "+fieldName+" FROM "+currentObj.Name+" WHERE id = ?", id).Scan(&value); err != nil {
+								return nil, err
+							}
+
+							if !value.Valid {
+								return nil, nil
+							}
+
+							return value.Int64, nil
+						case "TEXT", "BLOB":
+							db, err := getDBFromContext(p.Context)
+							if err != nil {
+								return nil, err
+							}
+
+							var (
+								value sql.NullString
+							)
+							if err := db.QueryRow("SELECT "+fieldName+" FROM "+currentObj.Name+" WHERE id = ?", id).Scan(&value); err != nil {
+								return nil, err
+							}
+
+							if !value.Valid {
+								return nil, nil
+							}
+
+							return value.String, nil
+						case "REAL", "NUMERIC":
+							db, err := getDBFromContext(p.Context)
+							if err != nil {
+								return nil, err
+							}
+
+							var (
+								value sql.NullFloat64
+							)
+							if err := db.QueryRow("SELECT "+fieldName+" FROM "+currentObj.Name+" WHERE id = ?", id).Scan(&value); err != nil {
+								return nil, err
+							}
+
+							if !value.Valid {
+								return nil, nil
+							}
+
+							return value.Float64, nil
+						default:
+							panic("unsupported type")
+						}
 					// case associations.OneToOne, associations.OneToMany:
 					// 	objFieldType = graphqlObjects[currentField.Association]
 					// case associations.ManyToOne, associations.ManyToMany:
