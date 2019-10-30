@@ -417,6 +417,8 @@ func main() {
 				objFieldType = graphql.NewNonNull(objFieldType)
 			}
 
+			fmt.Printf("Defining field '%s' for object '%s' (type: %+v) ...\n", fieldName, currentObj.Name, objFieldType)
+
 			graphqlObjects[currentObj.Name].AddFieldConfig(fieldName, &graphql.Field{
 				Type: objFieldType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -427,6 +429,7 @@ func main() {
 
 					switch currentField.AssociationType {
 					case associations.Identification:
+						fmt.Printf("%s ( %s ) -> %s (%s)\n", responsePathToString(p.Info.Path), currentField.AssociationType, base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentObj.Name, id))), fmt.Sprintf("%s:%d", currentObj.Name, id))
 						return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentObj.Name, id))), nil
 					case associations.Scalar:
 						switch currentField.Association {
@@ -444,9 +447,11 @@ func main() {
 							}
 
 							if !value.Valid {
+								fmt.Printf("%s ( %s ) -> null\n", responsePathToString(p.Info.Path), currentField.AssociationType)
 								return nil, nil
 							}
 
+							fmt.Printf("%s ( %s ) -> %d\n", responsePathToString(p.Info.Path), currentField.AssociationType, value.Int64)
 							return value.Int64, nil
 						case "TEXT", "BLOB":
 							db, err := getDBFromContext(p.Context)
@@ -462,9 +467,11 @@ func main() {
 							}
 
 							if !value.Valid {
+								fmt.Printf("%s ( %s ) -> null\n", responsePathToString(p.Info.Path), currentField.AssociationType)
 								return nil, nil
 							}
 
+							fmt.Printf("%s ( %s ) -> %s\n", responsePathToString(p.Info.Path), currentField.AssociationType, value.String)
 							return value.String, nil
 						case "REAL", "NUMERIC":
 							db, err := getDBFromContext(p.Context)
@@ -480,19 +487,41 @@ func main() {
 							}
 
 							if !value.Valid {
+								fmt.Printf("%s ( %s ) -> null\n", responsePathToString(p.Info.Path), currentField.AssociationType)
 								return nil, nil
 							}
 
+							fmt.Printf("%s ( %s ) -> %f\n", responsePathToString(p.Info.Path), currentField.AssociationType, value.Float64)
 							return value.Float64, nil
 						default:
 							panic("unsupported type")
 						}
+					case associations.OneToOne, associations.OneToMany:
+						db, err := getDBFromContext(p.Context)
+						if err != nil {
+							return nil, err
+						}
+
+						var (
+							association sql.NullInt64
+						)
+						if err := db.QueryRow("SELECT "+currentField.Name+" FROM "+currentObj.Name+" WHERE id = ?", id).Scan(&association); err != nil {
+							return nil, err
+						}
+
+						if !association.Valid {
+							fmt.Printf("%s ( %s ) -> null\n", responsePathToString(p.Info.Path), currentField.AssociationType)
+							return nil, nil
+						}
+
+						fmt.Printf("%s ( %s ) -> %d\n", responsePathToString(p.Info.Path), currentField.AssociationType, association.Int64)
+						return uint(association.Int64), nil
 					// case associations.OneToOne, associations.OneToMany:
 					// 	objFieldType = graphqlObjects[currentField.Association]
 					// case associations.ManyToOne, associations.ManyToMany:
 					// 	objFieldType = graphql.NewList(graphql.NewNonNull(graphqlObjects[currentField.Association]))
 					default:
-						fmt.Printf("Returning null ...\n")
+						fmt.Printf("%s ( %s ) -> null (default)\n", responsePathToString(p.Info.Path), currentField.AssociationType)
 						return nil, nil
 					}
 				},
