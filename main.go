@@ -122,31 +122,45 @@ func main() {
 	graphqlConnections := map[string]*graphql.Object{}
 	// create objects, edges and connections first
 	for _, obj := range a.Objects {
-		graphqlObjects[obj.Name] = graphql.NewObject(graphql.ObjectConfig{
-			Name:   obj.Name,
+		currentObj := obj
+		graphqlObjects[currentObj.Name] = graphql.NewObject(graphql.ObjectConfig{
+			Name:   currentObj.Name,
 			Fields: graphql.Fields{},
 			Interfaces: []*graphql.Interface{
 				node,
 			},
 		})
 
-		graphqlEdges[obj.Name] = graphql.NewObject(graphql.ObjectConfig{
-			Name:        obj.Name + "Edge",
+		graphqlEdges[currentObj.Name] = graphql.NewObject(graphql.ObjectConfig{
+			Name:        currentObj.Name + "Edge",
 			Description: "An edge in a connection.",
 			Fields: graphql.Fields{
 				"node": &graphql.Field{
-					Type:        graphql.NewNonNull(graphqlObjects[obj.Name]),
+					Type:        graphql.NewNonNull(graphqlObjects[currentObj.Name]),
 					Description: "The item at the end of the edge.",
+					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+						fmt.Printf("%sEdge.nodes.p.Source: %+v\n", currentObj.Name, p.Source)
+						return p.Source, nil
+					},
 				},
 				"cursor": &graphql.Field{
 					Type:        graphql.NewNonNull(graphql.String),
 					Description: "A cursor for use in pagination.",
+					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+						fmt.Printf("%sEdge.cursor.p.Source: %+v (%s)\n", currentObj.Name, p.Source, responsePathToString(p.Info.Path))
+						id, ok := p.Source.(uint)
+						if !ok {
+							return nil, errors.New("Missing ID")
+						}
+						return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentObj.Name, id))), nil
+						// return fmt.Sprintf("%v", p.Source), nil
+					},
 				},
 			},
 		})
 
-		graphqlConnections[obj.Name] = graphql.NewObject(graphql.ObjectConfig{
-			Name:        obj.Name + "Connection",
+		graphqlConnections[currentObj.Name] = graphql.NewObject(graphql.ObjectConfig{
+			Name:        currentObj.Name + "Connection",
 			Description: "A connection to a list of items.",
 			Fields: graphql.Fields{
 				"pageInfo": &graphql.Field{
@@ -154,8 +168,12 @@ func main() {
 					Description: "Information to aid in pagination.",
 				},
 				"edges": &graphql.Field{
-					Type:        graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphqlEdges[obj.Name]))),
+					Type:        graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphqlEdges[currentObj.Name]))),
 					Description: "Information to aid in pagination.",
+					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+						fmt.Printf("%sConnection.edges.p.Source: %+v\n", currentObj.Name, p.Source)
+						return p.Source, nil
+					},
 				},
 			},
 		})
@@ -200,12 +218,17 @@ func main() {
 			graphqlObjects[currentObj.Name].AddFieldConfig(fieldName, &graphql.Field{
 				Type: objFieldType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					id, ok := p.Source.(uint)
+					if !ok {
+						return nil, errors.New("Missing ID")
+					}
+					fmt.Printf("%s.%s.p.Source: %+v\n", currentObj.Name, fieldName, p.Source)
 					fmt.Printf("resolve field: %s\n", responsePathToString(p.Info.Path))
 					fmt.Printf("association type: %s\n", currentField.AssociationType)
 					switch currentField.AssociationType {
 					case associations.Identification:
 						fmt.Printf("Returning ID ...\n")
-						return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s.%s:%d", currentObj.Name, currentField.Name, 42))), nil
+						return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentObj.Name, id))), nil
 					// case associations.Scalar:
 					// 	switch currentField.Association {
 					// 	case "INTEGER":
@@ -238,7 +261,39 @@ func main() {
 		query.AddFieldConfig(strcase.ToSnake(name)+"s", &graphql.Field{
 			Type: graphql.NewNonNull(graphqlConnections[name]),
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				return 42, nil
+				db, err := getDBFromContext(p.Context)
+				if err != nil {
+					return nil, err
+				}
+
+				rows, err := db.Query(
+					"SELECT id FROM " + name,
+				)
+				if err != nil {
+					return nil, err
+				}
+				defer rows.Close()
+
+				var (
+					id  uint
+					ids []uint
+				)
+				for rows.Next() {
+					err := rows.Scan(&id)
+					if err != nil {
+						return nil, err
+					}
+
+					ids = append(ids, id)
+				}
+
+				if err := rows.Err(); err != nil {
+					return nil, err
+				}
+
+				fmt.Println("SELECT id FROM "+name, "->", ids)
+
+				return ids, nil
 			},
 		})
 	}
