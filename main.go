@@ -46,6 +46,38 @@ func httpDBMiddleware(db *sql.DB, h *handler.Handler) http.Handler {
 	})
 }
 
+type nodeCursor struct {
+	object string
+	id     uint
+}
+
+func parseNodeCursor(cursor string) (nodeCursor, error) {
+	bytesCursor, err := base64.StdEncoding.DecodeString(cursor)
+	if err != nil {
+		return nodeCursor{}, errors.Errorf("Invalid cursor '%s'", cursor)
+	}
+
+	stringsID := strings.SplitN(string(bytesCursor), ":", 2)
+	if len(stringsID) != 2 {
+		return nodeCursor{}, errors.Errorf("Invalid cursor '%s'", cursor)
+	}
+
+	int64ID, err := strconv.ParseInt(stringsID[1], 10, 0)
+	if err != nil {
+		return nodeCursor{}, errors.Wrapf(err, "Invalid cursor '%s'", cursor)
+	}
+
+	return nodeCursor{object: stringsID[0], id: uint(int64ID)}, nil
+}
+
+func (n nodeCursor) String() string {
+	return fmt.Sprintf("%s:%d", n.object, n.id)
+}
+
+func (n nodeCursor) OpaqueString() string {
+	return base64.StdEncoding.EncodeToString([]byte(n.String()))
+}
+
 type connection struct {
 	// PageInfo
 	hasNextPage     bool
@@ -54,7 +86,7 @@ type connection struct {
 	endCursor       string
 
 	// Edges
-	edges []uint
+	edges []nodeCursor
 }
 
 func max(a, b uint) uint {
@@ -304,6 +336,7 @@ func main() {
 					if !ok {
 						return nil, errors.New("Malformed source")
 					}
+
 					return connection.hasNextPage, nil
 				},
 			},
@@ -315,6 +348,7 @@ func main() {
 					if !ok {
 						return nil, errors.New("Malformed source")
 					}
+
 					return connection.hasPreviousPage, nil
 				},
 			},
@@ -326,6 +360,7 @@ func main() {
 					if !ok {
 						return nil, errors.New("Malformed source")
 					}
+
 					return connection.startCursor, nil
 				},
 			},
@@ -337,6 +372,7 @@ func main() {
 					if !ok {
 						return nil, errors.New("Malformed source")
 					}
+
 					return connection.endCursor, nil
 				},
 			},
@@ -372,12 +408,12 @@ func main() {
 					Type:        graphql.NewNonNull(graphql.String),
 					Description: "A cursor for use in pagination.",
 					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-						id, ok := p.Source.(uint)
+						cursor, ok := p.Source.(nodeCursor)
 						if !ok {
 							return nil, errors.New("Malformed source")
 						}
 
-						return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentObj.Name, id))), nil
+						return cursor.OpaqueString(), nil
 					},
 				},
 			},
@@ -468,15 +504,15 @@ func main() {
 				Type: objFieldType,
 				Args: objFieldArgs,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					id, ok := p.Source.(uint)
+					cursor, ok := p.Source.(nodeCursor)
 					if !ok {
 						return nil, errors.New("Malformed source")
 					}
 
 					switch currentField.AssociationType {
 					case associations.Identification:
-						fmt.Printf("%s ( %s ) -> %s (%s)\n", responsePathToString(p.Info.Path), currentField.AssociationType, base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentObj.Name, id))), fmt.Sprintf("%s:%d", currentObj.Name, id))
-						return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentObj.Name, id))), nil
+						fmt.Printf("%s ( %s ) -> %s (%s)\n", responsePathToString(p.Info.Path), currentField.AssociationType, cursor.OpaqueString(), cursor.String())
+						return cursor.OpaqueString(), nil
 					case associations.Scalar:
 						switch currentField.Association {
 						case "INTEGER":
@@ -488,7 +524,7 @@ func main() {
 							var (
 								value sql.NullInt64
 							)
-							if err := db.QueryRow("SELECT "+fieldName+" FROM "+currentObj.Name+" WHERE id = ?", id).Scan(&value); err != nil {
+							if err := db.QueryRow("SELECT "+fieldName+" FROM "+currentObj.Name+" WHERE id = ?", cursor.id).Scan(&value); err != nil {
 								return nil, err
 							}
 
@@ -508,7 +544,7 @@ func main() {
 							var (
 								value sql.NullString
 							)
-							if err := db.QueryRow("SELECT "+fieldName+" FROM "+currentObj.Name+" WHERE id = ?", id).Scan(&value); err != nil {
+							if err := db.QueryRow("SELECT "+fieldName+" FROM "+currentObj.Name+" WHERE id = ?", cursor.id).Scan(&value); err != nil {
 								return nil, err
 							}
 
@@ -528,7 +564,7 @@ func main() {
 							var (
 								value sql.NullFloat64
 							)
-							if err := db.QueryRow("SELECT "+fieldName+" FROM "+currentObj.Name+" WHERE id = ?", id).Scan(&value); err != nil {
+							if err := db.QueryRow("SELECT "+fieldName+" FROM "+currentObj.Name+" WHERE id = ?", cursor.id).Scan(&value); err != nil {
 								return nil, err
 							}
 
@@ -551,7 +587,7 @@ func main() {
 						var (
 							association sql.NullInt64
 						)
-						if err := db.QueryRow("SELECT "+currentField.Name+" FROM "+currentObj.Name+" WHERE id = ?", id).Scan(&association); err != nil {
+						if err := db.QueryRow("SELECT "+currentField.Name+" FROM "+currentObj.Name+" WHERE id = ?", cursor.id).Scan(&association); err != nil {
 							return nil, err
 						}
 
@@ -561,7 +597,7 @@ func main() {
 						}
 
 						fmt.Printf("%s ( %s ) -> %d\n", responsePathToString(p.Info.Path), currentField.AssociationType, association.Int64)
-						return uint(association.Int64), nil
+						return nodeCursor{object: currentObj.Name, id: uint(association.Int64)}, nil
 					case associations.ManyToOne:
 						db, err := getDBFromContext(p.Context)
 						if err != nil {
@@ -578,7 +614,7 @@ func main() {
 						}
 						rows, hasPreviousPage, hasNextPage, err := getRowsWithPagination(
 							p.Context, db, before, after, first, last,
-							"SELECT id FROM "+currentField.Association+" WHERE "+*currentField.ForeignField+" = ?", id)
+							"SELECT id FROM "+currentField.Association+" WHERE "+*currentField.ForeignField+" = ?", cursor.id)
 						if err != nil {
 							return nil, err
 						}
@@ -594,7 +630,7 @@ func main() {
 								return nil, err
 							}
 
-							conn.edges = append(conn.edges, id)
+							conn.edges = append(conn.edges, nodeCursor{object: currentField.Association, id: id})
 						}
 
 						if err := rows.Err(); err != nil {
@@ -602,11 +638,11 @@ func main() {
 						}
 
 						if len(conn.edges) > 0 {
-							conn.startCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentField.Association, conn.edges[0])))
+							conn.startCursor = conn.edges[0].OpaqueString()
 						}
 
 						if len(conn.edges) > 0 {
-							conn.endCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentField.Association, conn.edges[len(conn.edges)-1])))
+							conn.endCursor = conn.edges[len(conn.edges)-1].OpaqueString()
 						}
 
 						conn.hasPreviousPage = hasPreviousPage
@@ -635,7 +671,7 @@ func main() {
 						}
 						rows, hasPreviousPage, hasNextPage, err := getRowsWithPagination(
 							p.Context, db, before, after, first, last,
-							"SELECT "+*currentField.JoinForeignField+" FROM "+*currentField.JoinTable+" WHERE "+*currentField.JoinTable+"."+*currentField.JoinOwnField+" = ?", id)
+							"SELECT "+*currentField.JoinForeignField+" FROM "+*currentField.JoinTable+" WHERE "+*currentField.JoinTable+"."+*currentField.JoinOwnField+" = ?", cursor.id)
 						if err != nil {
 							return nil, err
 						}
@@ -651,7 +687,7 @@ func main() {
 								return nil, err
 							}
 
-							conn.edges = append(conn.edges, id)
+							conn.edges = append(conn.edges, nodeCursor{object: currentField.Association, id: id})
 						}
 
 						if err := rows.Err(); err != nil {
@@ -659,11 +695,11 @@ func main() {
 						}
 
 						if len(conn.edges) > 0 {
-							conn.startCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentField.Association, conn.edges[0])))
+							conn.startCursor = conn.edges[0].OpaqueString()
 						}
 
 						if len(conn.edges) > 0 {
-							conn.endCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentField.Association, conn.edges[len(conn.edges)-1])))
+							conn.endCursor = conn.edges[len(conn.edges)-1].OpaqueString()
 						}
 
 						conn.hasPreviousPage = hasPreviousPage
@@ -729,7 +765,7 @@ func main() {
 						return nil, err
 					}
 
-					conn.edges = append(conn.edges, id)
+					conn.edges = append(conn.edges, nodeCursor{object: name, id: id})
 				}
 
 				if err := rows.Err(); err != nil {
@@ -737,11 +773,11 @@ func main() {
 				}
 
 				if len(conn.edges) > 0 {
-					conn.startCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", name, conn.edges[0])))
+					conn.startCursor = conn.edges[0].OpaqueString()
 				}
 
 				if len(conn.edges) > 0 {
-					conn.endCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", name, conn.edges[len(conn.edges)-1])))
+					conn.endCursor = conn.edges[len(conn.edges)-1].OpaqueString()
 				}
 
 				conn.hasPreviousPage = hasPreviousPage
@@ -751,7 +787,58 @@ func main() {
 			},
 		})
 	}
-	// TODO: query.AddFieldConfig("node", ...) for Node retrieval
+
+	node.ResolveType = func(p graphql.ResolveTypeParams) *graphql.Object {
+		cursor, ok := p.Value.(nodeCursor)
+		if !ok {
+			return nil
+		}
+
+		for name := range graphqlObjects {
+			if name == cursor.object {
+				return graphqlObjects[name]
+			}
+		}
+
+		return nil
+	}
+
+	query.AddFieldConfig("node", &graphql.Field{
+		Type: node,
+		Args: graphql.FieldConfigArgument{
+			"id": &graphql.ArgumentConfig{
+				Type:        graphql.NewNonNull(graphql.ID),
+				Description: "The ID of an object",
+			},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			cursorInterface, ok := p.Args["id"]
+			if !ok {
+				return nil, errors.New("Missing id cursor")
+			}
+			cursor, ok := cursorInterface.(string)
+			if !ok {
+				return nil, errors.New("Malformed id cursor")
+			}
+
+			bytesCursor, err := base64.StdEncoding.DecodeString(cursor)
+			if err != nil {
+				return nil, errors.Errorf("Invalid cursor '%s'", cursor)
+			}
+
+			stringsID := strings.SplitN(string(bytesCursor), ":", 2)
+			if len(stringsID) != 2 {
+				return nil, errors.Errorf("Invalid cursor '%s'", cursor)
+			}
+
+			uintID, err := strconv.ParseInt(stringsID[1], 10, 0)
+			if err != nil {
+				return nil, errors.Wrapf(err, "Invalid cursor '%s'", cursor)
+			}
+
+			return nodeCursor{object: stringsID[0], id: uint(uintID)}, nil
+		},
+	})
 
 	schema, err := graphql.NewSchema(graphql.SchemaConfig{Query: query})
 	if err != nil {
