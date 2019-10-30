@@ -90,7 +90,7 @@ func getRowsWithPagination(
 
 	// count rows in table
 	var count uint
-	if err := db.QueryRowContext(ctx, fmt.Sprintf("SELECT count(*) FROM (%s)", query)).Scan(&count); err != nil {
+	if err := db.QueryRowContext(ctx, fmt.Sprintf("SELECT count(*) FROM (%s)", query), args...).Scan(&count); err != nil {
 		return nil, false, false, errors.Wrap(err, "database error (count)")
 	}
 
@@ -115,7 +115,7 @@ func getRowsWithPagination(
 		positionRows, err := db.QueryContext(ctx, fmt.Sprintf(
 			"SELECT * FROM (SELECT id, row_number() OVER () AS row_id FROM (%s)) WHERE %s",
 			query, strings.Join(whereExprs, " OR "),
-		), whereValues...)
+		), append(args, whereValues...)...)
 		if err != nil {
 			return nil, false, false, errors.Wrap(err, "database error (positions with where)")
 		}
@@ -516,6 +516,78 @@ func main() {
 
 						fmt.Printf("%s ( %s ) -> %d\n", responsePathToString(p.Info.Path), currentField.AssociationType, association.Int64)
 						return uint(association.Int64), nil
+					case associations.ManyToOne:
+						db, err := getDBFromContext(p.Context)
+						if err != nil {
+							return nil, err
+						}
+
+						var before *uint
+						// if args.Before != "" {
+						// 	id, err := substanceCursorToID(substanceCursor(args.Before))
+						// 	if err != nil {
+						// 		return nil, err
+						// 	}
+						// 	before = &id
+						// }
+						var after *uint
+						// if args.After != "" {
+						// 	id, err := substanceCursorToID(substanceCursor(args.After))
+						// 	if err != nil {
+						// 		return nil, err
+						// 	}
+						// 	after = &id
+						// }
+						var first *uint
+						// if args.First != -1 {
+						// 	firstUint := uint(args.First)
+						// 	first = &firstUint
+						// }
+						var last *uint
+						// if args.Last != -1 {
+						// 	lastUint := uint(args.Last)
+						// 	last = &lastUint
+						// }
+						if currentField.ForeignField == nil {
+							return nil, errors.New("Malformed association (foreign field)")
+						}
+						rows, hasPreviousPage, hasNextPage, err := getRowsWithPagination(
+							p.Context, db, before, after, first, last,
+							"SELECT id FROM "+currentField.Association+" WHERE "+*currentField.ForeignField+" = ?", id)
+						if err != nil {
+							return nil, err
+						}
+						defer rows.Close()
+
+						var (
+							id    uint
+							rowID uint
+							conn  connection
+						)
+						for rows.Next() {
+							if err := rows.Scan(&id, &rowID); err != nil {
+								return nil, err
+							}
+
+							conn.edges = append(conn.edges, id)
+						}
+
+						if err := rows.Err(); err != nil {
+							return nil, err
+						}
+
+						if len(conn.edges) > 0 {
+							conn.startCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentField.Association, conn.edges[0])))
+						}
+
+						if len(conn.edges) > 0 {
+							conn.endCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentField.Association, conn.edges[len(conn.edges)-1])))
+						}
+
+						conn.hasPreviousPage = hasPreviousPage
+						conn.hasNextPage = hasNextPage
+
+						return conn, nil
 					// case associations.OneToOne, associations.OneToMany:
 					// 	objFieldType = graphqlObjects[currentField.Association]
 					// case associations.ManyToOne, associations.ManyToMany:
