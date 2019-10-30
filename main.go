@@ -4,16 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/handler"
 	"github.com/h3ndrk/dynamic-graphql-api/associations"
 	"github.com/iancoleman/strcase"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/pkg/errors"
 )
 
 func responsePathToString(path *graphql.ResponsePath) string {
@@ -42,6 +43,170 @@ func httpDBMiddleware(db *sql.DB, h *handler.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.ContextHandler(context.WithValue(r.Context(), KeyDB, db), w, r)
 	})
+}
+
+type connection struct {
+	// PageInfo
+	hasNextPage     bool
+	hasPreviousPage bool
+	startCursor     string
+	endCursor       string
+
+	// Edges
+	edges []uint
+}
+
+func max(a, b uint) uint {
+	if a < b {
+		return b
+	}
+
+	return a
+}
+
+func ternaryMax(a, b, c uint) uint {
+	return max(max(a, b), c)
+}
+
+func min(a, b uint) uint {
+	if a > b {
+		return b
+	}
+
+	return a
+}
+
+// getRowsByArgs queries the given database table with pagination and ordering and returns the resulting rows and page-info data (in this order: has previous page, has next page). 'table' and 'columns' need to be escaped because they are directly inserted into the query string.
+func getRowsWithPagination(
+	ctx context.Context,
+	db *sql.DB,
+	before, after, first, last *uint,
+	query string, args ...interface{},
+) (*sql.Rows, bool, bool, error) {
+	if first != nil && last != nil {
+		// reset last
+		last = nil
+	}
+
+	// count rows in table
+	var count uint
+	if err := db.QueryRowContext(ctx, fmt.Sprintf("SELECT count(*) FROM (%s)", query)).Scan(&count); err != nil {
+		return nil, false, false, errors.Wrap(err, "database error (count)")
+	}
+
+	// get before and after positions (one-based)
+	var (
+		positionBefore uint
+		positionAfter  uint
+	)
+	if before != nil || after != nil {
+		var (
+			whereExprs  []string
+			whereValues []interface{}
+		)
+		if before != nil {
+			whereExprs = append(whereExprs, "id = ?")
+			whereValues = append(whereValues, *before)
+		}
+		if after != nil {
+			whereExprs = append(whereExprs, "id = ?")
+			whereValues = append(whereValues, *after)
+		}
+		positionRows, err := db.QueryContext(ctx, fmt.Sprintf(
+			"SELECT * FROM (SELECT id, row_number() OVER () AS row_id FROM (%s)) WHERE %s",
+			query, strings.Join(whereExprs, " OR "),
+		), whereValues...)
+		if err != nil {
+			return nil, false, false, errors.Wrap(err, "database error (positions with where)")
+		}
+		defer positionRows.Close()
+
+		var (
+			id    uint
+			rowID uint
+		)
+		for positionRows.Next() {
+			err := positionRows.Scan(&id, &rowID)
+			if err != nil {
+				return nil, false, false, errors.Wrap(err, "database error (positions scan)")
+			}
+
+			if before != nil && id == *before {
+				positionBefore = rowID
+			}
+			if after != nil && id == *after {
+				positionAfter = rowID
+			}
+		}
+
+		if err := positionRows.Err(); err != nil {
+			return nil, false, false, errors.Wrap(err, "database error (positions error)")
+		}
+	}
+
+	// calculate range (one-based)
+	var (
+		begin uint = 1         // inclusive
+		end   uint = count + 1 // exclusive
+	)
+	if before != nil {
+		end = positionBefore
+	}
+	if after != nil {
+		begin = positionAfter + 1
+	}
+	if first != nil {
+		end = min(begin+*first, count+1)
+	}
+	if last != nil {
+		begin = ternaryMax(1, begin, end-*last)
+	}
+
+	// query range
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(
+		`SELECT * FROM (
+		SELECT
+			*, row_number() OVER () AS __row_id
+		FROM (%s)
+	) WHERE __row_id >= ? AND __row_id < ?`, query,
+	), append(args, &begin, &end)...)
+	if err != nil {
+		return nil, false, false, errors.Wrap(err, "database error (rows)")
+	}
+	// v := reflect.ValueOf(out)
+	// if v.Elem().Kind() == reflect.Struct {
+	// 	rows, err := db.QueryContext(ctx, fmt.Sprintf(
+	// 		`SELECT * FROM (
+	// 		SELECT
+	// 			*, row_number() OVER () AS __row_id
+	// 		FROM (%s)
+	// 	) WHERE __row_id >= ? AND __row_id < ?`, query,
+	// 	), &begin, &end)
+	// 	if err != nil {
+	// 		return false, false, errors.Wrap(err, "database error (rows)")
+	// 	}
+	// 	if !rows.Next() {
+	// 		return false, false, errors.New("database error: empty result")
+	// 	}
+	// 	rows.Columns()
+	// 	columnNameMap := getColumnNameMap(v.Elem())
+	// 	for i := 0; i < v.Elem().NumField(); i++ {
+
+	// 		v.Elem().Field(i).Interface(
+	// 		)
+	// 		v.Elem().
+	// 	}
+	// 	var fields []reflect.StructField
+	// for i := 0; i < ts.NumField(); i++ {
+	// 	_, ok := ts.Field(i).Tag.Lookup("db")
+	// 	if !ok {
+	// 		continue
+	// 	}
+	// 	fields = append(fields, ts.Field(i))
+	// }
+	// }
+
+	return rows, begin > 1, end < count+1, nil
 }
 
 func main() {
@@ -101,18 +266,46 @@ func main() {
 			"hasNextPage": &graphql.Field{
 				Type:        graphql.NewNonNull(graphql.Boolean),
 				Description: "When paginating forwards, are there more items?",
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					connection, ok := p.Source.(connection)
+					if !ok {
+						return nil, errors.New("Malformed source")
+					}
+					return connection.hasNextPage, nil
+				},
 			},
 			"hasPreviousPage": &graphql.Field{
 				Type:        graphql.NewNonNull(graphql.Boolean),
 				Description: "When paginating backwards, are there more items?",
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					connection, ok := p.Source.(connection)
+					if !ok {
+						return nil, errors.New("Malformed source")
+					}
+					return connection.hasPreviousPage, nil
+				},
 			},
 			"startCursor": &graphql.Field{
-				Type:        graphql.String,
+				Type:        graphql.NewNonNull(graphql.String),
 				Description: "When paginating backwards, the cursor to continue.",
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					connection, ok := p.Source.(connection)
+					if !ok {
+						return nil, errors.New("Malformed source")
+					}
+					return connection.startCursor, nil
+				},
 			},
 			"endCursor": &graphql.Field{
-				Type:        graphql.String,
+				Type:        graphql.NewNonNull(graphql.String),
 				Description: "When paginating forwards, the cursor to continue.",
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					connection, ok := p.Source.(connection)
+					if !ok {
+						return nil, errors.New("Malformed source")
+					}
+					return connection.endCursor, nil
+				},
 			},
 		},
 	})
@@ -139,7 +332,6 @@ func main() {
 					Type:        graphql.NewNonNull(graphqlObjects[currentObj.Name]),
 					Description: "The item at the end of the edge.",
 					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-						fmt.Printf("%sEdge.nodes.p.Source: %+v\n", currentObj.Name, p.Source)
 						return p.Source, nil
 					},
 				},
@@ -147,18 +339,21 @@ func main() {
 					Type:        graphql.NewNonNull(graphql.String),
 					Description: "A cursor for use in pagination.",
 					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-						fmt.Printf("%sEdge.cursor.p.Source: %+v (%s)\n", currentObj.Name, p.Source, responsePathToString(p.Info.Path))
 						id, ok := p.Source.(uint)
 						if !ok {
-							return nil, errors.New("Missing ID")
+							return nil, errors.New("Malformed source")
 						}
+
 						return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentObj.Name, id))), nil
-						// return fmt.Sprintf("%v", p.Source), nil
 					},
 				},
 			},
 		})
 
+		// TODO: introduce connection struct with fields pageInfo and edges (ids)
+		// TODO: use that informations in this connection
+		// TODO: add pagination query code to query and build connection struct
+		// TODO: later add input arguments (before, after, first, last)
 		graphqlConnections[currentObj.Name] = graphql.NewObject(graphql.ObjectConfig{
 			Name:        currentObj.Name + "Connection",
 			Description: "A connection to a list of items.",
@@ -166,13 +361,20 @@ func main() {
 				"pageInfo": &graphql.Field{
 					Type:        graphql.NewNonNull(pageInfo),
 					Description: "Information to aid in pagination.",
+					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+						return p.Source, nil
+					},
 				},
 				"edges": &graphql.Field{
 					Type:        graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphqlEdges[currentObj.Name]))),
 					Description: "Information to aid in pagination.",
 					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-						fmt.Printf("%sConnection.edges.p.Source: %+v\n", currentObj.Name, p.Source)
-						return p.Source, nil
+						connection, ok := p.Source.(connection)
+						if !ok {
+							return nil, errors.New("Malformed source")
+						}
+
+						return connection.edges, nil
 					},
 				},
 			},
@@ -220,7 +422,7 @@ func main() {
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					id, ok := p.Source.(uint)
 					if !ok {
-						return nil, errors.New("Missing ID")
+						return nil, errors.New("Malformed source")
 					}
 					fmt.Printf("%s.%s.p.Source: %+v\n", currentObj.Name, fieldName, p.Source)
 					fmt.Printf("resolve field: %s\n", responsePathToString(p.Info.Path))
@@ -266,34 +468,69 @@ func main() {
 					return nil, err
 				}
 
-				rows, err := db.Query(
-					"SELECT id FROM " + name,
-				)
+				var before *uint
+				// if args.Before != "" {
+				// 	id, err := substanceCursorToID(substanceCursor(args.Before))
+				// 	if err != nil {
+				// 		return nil, err
+				// 	}
+				// 	before = &id
+				// }
+				var after *uint
+				// if args.After != "" {
+				// 	id, err := substanceCursorToID(substanceCursor(args.After))
+				// 	if err != nil {
+				// 		return nil, err
+				// 	}
+				// 	after = &id
+				// }
+				var first *uint
+				// if args.First != -1 {
+				// 	firstUint := uint(args.First)
+				// 	first = &firstUint
+				// }
+				var last *uint
+				// if args.Last != -1 {
+				// 	lastUint := uint(args.Last)
+				// 	last = &lastUint
+				// }
+				rows, hasPreviousPage, hasNextPage, err := getRowsWithPagination(
+					p.Context, db, before, after, first, last,
+					"SELECT id FROM "+name)
 				if err != nil {
 					return nil, err
 				}
 				defer rows.Close()
 
 				var (
-					id  uint
-					ids []uint
+					id    uint
+					rowID uint
+					conn  connection
 				)
 				for rows.Next() {
-					err := rows.Scan(&id)
-					if err != nil {
+					if err := rows.Scan(&id, &rowID); err != nil {
 						return nil, err
 					}
 
-					ids = append(ids, id)
+					conn.edges = append(conn.edges, id)
 				}
 
 				if err := rows.Err(); err != nil {
 					return nil, err
 				}
 
-				fmt.Println("SELECT id FROM "+name, "->", ids)
+				if len(conn.edges) > 0 {
+					conn.startCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", name, conn.edges[0])))
+				}
 
-				return ids, nil
+				if len(conn.edges) > 0 {
+					conn.endCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", name, conn.edges[len(conn.edges)-1])))
+				}
+
+				conn.hasPreviousPage = hasPreviousPage
+				conn.hasNextPage = hasNextPage
+
+				return conn, nil
 			},
 		})
 	}
