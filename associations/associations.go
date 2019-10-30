@@ -53,6 +53,7 @@ type Field struct {
 	Association     string // either scalar type or object name of association
 	NonNull         bool
 	ForeignField    *string
+	JoinTable       *string
 }
 
 func newField(column parse.Column, tableConstraints []parse.TableConstraint) (*Field, error) {
@@ -113,7 +114,11 @@ func (f Field) String() string {
 	if f.ForeignField != nil {
 		foreignField = *f.ForeignField
 	}
-	return fmt.Sprintf("Field{Name: %s, AssociationType: %s, Association: %s, NonNull: %t, ForeignField: %s}", f.Name, f.AssociationType, f.Association, f.NonNull, foreignField)
+	joinTable := "null"
+	if f.JoinTable != nil {
+		joinTable = *f.ForeignField
+	}
+	return fmt.Sprintf("Field{Name: %s, AssociationType: %s, Association: %s, NonNull: %t, ForeignField: %s, JoinTable: %s}", f.Name, f.AssociationType, f.Association, f.NonNull, foreignField, joinTable)
 }
 
 // Object represents an object which has fields with associations to other objects
@@ -236,6 +241,7 @@ func Evaluate(sqls []string) (*Associations, error) {
 					} else if objAssociated.Name == associatedObjects[1] {
 						field.Association = associatedObjects[0]
 					}
+					field.JoinTable = &objJoined.Name
 				}
 			}
 
