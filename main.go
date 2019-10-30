@@ -588,10 +588,84 @@ func main() {
 						conn.hasNextPage = hasNextPage
 
 						return conn, nil
-					// case associations.OneToOne, associations.OneToMany:
-					// 	objFieldType = graphqlObjects[currentField.Association]
-					// case associations.ManyToOne, associations.ManyToMany:
-					// 	objFieldType = graphql.NewList(graphql.NewNonNull(graphqlObjects[currentField.Association]))
+					case associations.ManyToMany:
+						db, err := getDBFromContext(p.Context)
+						if err != nil {
+							return nil, err
+						}
+
+						var before *uint
+						// if args.Before != "" {
+						// 	id, err := substanceCursorToID(substanceCursor(args.Before))
+						// 	if err != nil {
+						// 		return nil, err
+						// 	}
+						// 	before = &id
+						// }
+						var after *uint
+						// if args.After != "" {
+						// 	id, err := substanceCursorToID(substanceCursor(args.After))
+						// 	if err != nil {
+						// 		return nil, err
+						// 	}
+						// 	after = &id
+						// }
+						var first *uint
+						// if args.First != -1 {
+						// 	firstUint := uint(args.First)
+						// 	first = &firstUint
+						// }
+						var last *uint
+						// if args.Last != -1 {
+						// 	lastUint := uint(args.Last)
+						// 	last = &lastUint
+						// }
+						if currentField.JoinTable == nil {
+							return nil, errors.New("Malformed association (join table)")
+						}
+						if currentField.JoinForeignField == nil {
+							return nil, errors.New("Malformed association (join foreign field)")
+						}
+						if currentField.JoinOwnField == nil {
+							return nil, errors.New("Malformed association (join own field)")
+						}
+						rows, hasPreviousPage, hasNextPage, err := getRowsWithPagination(
+							p.Context, db, before, after, first, last,
+							"SELECT "+*currentField.JoinForeignField+" FROM "+*currentField.JoinTable+" WHERE "+*currentField.JoinTable+"."+*currentField.JoinOwnField+" = ?", id)
+						if err != nil {
+							return nil, err
+						}
+						defer rows.Close()
+
+						var (
+							id    uint
+							rowID uint
+							conn  connection
+						)
+						for rows.Next() {
+							if err := rows.Scan(&id, &rowID); err != nil {
+								return nil, err
+							}
+
+							conn.edges = append(conn.edges, id)
+						}
+
+						if err := rows.Err(); err != nil {
+							return nil, err
+						}
+
+						if len(conn.edges) > 0 {
+							conn.startCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentField.Association, conn.edges[0])))
+						}
+
+						if len(conn.edges) > 0 {
+							conn.endCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d", currentField.Association, conn.edges[len(conn.edges)-1])))
+						}
+
+						conn.hasPreviousPage = hasPreviousPage
+						conn.hasNextPage = hasNextPage
+
+						return conn, nil
 					default:
 						fmt.Printf("%s ( %s ) -> null (default)\n", responsePathToString(p.Info.Path), currentField.AssociationType)
 						return nil, nil

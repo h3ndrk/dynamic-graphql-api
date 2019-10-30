@@ -46,14 +46,16 @@ func (a AssociationType) String() string {
 
 // Field represents an object field which holds either a identification, scalar or object association
 type Field struct {
-	column          parse.Column
-	tableConstraint parse.TableConstraint
-	Name            string
-	AssociationType AssociationType
-	Association     string // either scalar type or object name of association
-	NonNull         bool
-	ForeignField    *string
-	JoinTable       *string
+	column           parse.Column
+	tableConstraint  parse.TableConstraint
+	Name             string
+	AssociationType  AssociationType
+	Association      string // either scalar type or object name of association
+	NonNull          bool
+	ForeignField     *string
+	JoinTable        *string
+	JoinForeignField *string
+	JoinOwnField     *string
 }
 
 func newField(column parse.Column, tableConstraints []parse.TableConstraint) (*Field, error) {
@@ -116,9 +118,17 @@ func (f Field) String() string {
 	}
 	joinTable := "null"
 	if f.JoinTable != nil {
-		joinTable = *f.ForeignField
+		joinTable = *f.JoinTable
 	}
-	return fmt.Sprintf("Field{Name: %s, AssociationType: %s, Association: %s, NonNull: %t, ForeignField: %s, JoinTable: %s}", f.Name, f.AssociationType, f.Association, f.NonNull, foreignField, joinTable)
+	joinForeignField := "null"
+	if f.JoinForeignField != nil {
+		joinForeignField = *f.JoinForeignField
+	}
+	joinOwnField := "null"
+	if f.JoinOwnField != nil {
+		joinOwnField = *f.JoinOwnField
+	}
+	return fmt.Sprintf("Field{Name: %s, AssociationType: %s, Association: %s, NonNull: %t, ForeignField: %s, JoinTable: %s, JoinForeignField: %s, JoinOwnField: %s}", f.Name, f.AssociationType, f.Association, f.NonNull, foreignField, joinTable, joinForeignField, joinOwnField)
 }
 
 // Object represents an object which has fields with associations to other objects
@@ -163,12 +173,20 @@ func (o Object) getAssociationTo(name string) *Field {
 	return nil
 }
 
-func (o Object) getAssociatedObjects() []string {
+type associatedObject struct {
+	objectName string
+	fieldName  string
+}
+
+func (o Object) getAssociatedObjects() []associatedObject {
 	if len(o.Fields) == 2 {
-		var associatedObjects []string
+		var associatedObjects []associatedObject
 		for _, field := range o.Fields {
 			if field.AssociationType == OneToMany {
-				associatedObjects = append(associatedObjects, field.Association)
+				associatedObjects = append(associatedObjects, associatedObject{
+					objectName: field.Association,
+					fieldName:  field.Name,
+				})
 			}
 		}
 		if len(associatedObjects) == 2 {
@@ -236,10 +254,14 @@ func Evaluate(sqls []string) (*Associations, error) {
 				field := objAssociated.getAssociationTo(objJoined.Name)
 				if field != nil {
 					field.AssociationType = ManyToMany
-					if objAssociated.Name == associatedObjects[0] {
-						field.Association = associatedObjects[1]
-					} else if objAssociated.Name == associatedObjects[1] {
-						field.Association = associatedObjects[0]
+					if objAssociated.Name == associatedObjects[0].objectName {
+						field.Association = associatedObjects[1].objectName
+						field.JoinForeignField = &associatedObjects[1].fieldName
+						field.JoinOwnField = &associatedObjects[0].fieldName
+					} else if objAssociated.Name == associatedObjects[1].objectName {
+						field.Association = associatedObjects[0].objectName
+						field.JoinForeignField = &associatedObjects[0].fieldName
+						field.JoinOwnField = &associatedObjects[1].fieldName
 					}
 					field.JoinTable = &objJoined.Name
 				}
