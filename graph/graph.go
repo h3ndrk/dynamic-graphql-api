@@ -1,6 +1,10 @@
 package graph
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/pkg/errors"
+)
 
 type Graph struct {
 	Nodes []*Node
@@ -33,18 +37,72 @@ func (g *Graph) AddEdge(from, to *Node, attrs map[string]string) *Edge {
 	return e
 }
 
-// func (g *Graph) First(f func(n *Node) bool) *Node {
-// 	for i := range g.Nodes {
-// 		if f(&g.Nodes[i]) {
-// 			return &g.Nodes[i]
-// 		}
-// 	}
+func (g Graph) EdgesByFrom(from *Node) []*Edge {
+	var edges []*Edge
+	for _, e := range g.Edges {
+		if e.From == from {
+			edges = append(edges, e)
+		}
+	}
 
-// 	return nil
-// }
+	return edges
+}
+
+func (g Graph) EdgesByFromWithFilter(from *Node, f func(e *Edge) bool) []*Edge {
+	var edges []*Edge
+	for _, e := range g.Edges {
+		if e.From == from && f(e) {
+			edges = append(edges, e)
+		}
+	}
+
+	return edges
+}
+
+func (g Graph) NodeByFilter(f func(n *Node) bool) (*Node, error) {
+	for _, n := range g.Nodes {
+		if f(n) {
+			return n, nil
+		}
+	}
+
+	return nil, errors.New("no node matched by filter")
+}
+
+func (g Graph) NodesByFilter(f func(n *Node) bool) []*Node {
+	var nodes []*Node
+	for _, n := range g.Nodes {
+		if f(n) {
+			nodes = append(nodes, n)
+		}
+	}
+
+	return nodes
+}
 
 type Node struct {
 	Attrs map[string]string
+}
+
+func (n Node) HasAttrKey(attrKey string) bool {
+	_, ok := n.Attrs[attrKey]
+	return ok
+}
+
+func (n Node) HasAttrValue(attrKey string, attrValue string) bool {
+	if v, ok := n.Attrs[attrKey]; ok {
+		return v == attrValue
+	}
+
+	return false
+}
+
+func (n Node) GetAttrValueDefault(attrKey string, defaultValue string) string {
+	if v, ok := n.Attrs[attrKey]; ok {
+		return v
+	}
+
+	return defaultValue
 }
 
 type Edge struct {

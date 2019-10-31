@@ -89,7 +89,9 @@ func (g *Graph) addStmtColumn(nodeTable *Node, column *parse.Column, tableConstr
 	}
 
 	nodeColumn := g.AddNode(attrs)
-	g.AddEdge(nodeTable, nodeColumn, map[string]string{})
+	g.AddEdge(nodeTable, nodeColumn, map[string]string{
+		"type": "tableHasColumn",
+	})
 	return nil
 }
 
