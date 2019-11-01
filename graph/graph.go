@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pkg/errors"
 )
@@ -9,6 +10,19 @@ import (
 type Graph struct {
 	Nodes []*Node
 	Edges []*Edge
+}
+
+func (g Graph) String() string {
+	var stringNodes []string
+	for _, n := range g.Nodes {
+		stringNodes = append(stringNodes, fmt.Sprintf("Node %p: %+v", n, n.Attrs))
+	}
+	var stringEdges []string
+	for _, e := range g.Edges {
+		stringEdges = append(stringEdges, fmt.Sprintf("Edge %p -> %p: %+v", e.From, e.To, e.Attrs))
+	}
+
+	return strings.Join(append(stringNodes, stringEdges...), "\n")
 }
 
 func (g *Graph) AddNode(attrs map[string]string) *Node {
@@ -109,4 +123,25 @@ type Edge struct {
 	From  *Node
 	To    *Node
 	Attrs map[string]string
+}
+
+func (e Edge) HasAttrKey(attrKey string) bool {
+	_, ok := e.Attrs[attrKey]
+	return ok
+}
+
+func (e Edge) HasAttrValue(attrKey string, attrValue string) bool {
+	if v, ok := e.Attrs[attrKey]; ok {
+		return v == attrValue
+	}
+
+	return false
+}
+
+func (e Edge) GetAttrValueDefault(attrKey string, defaultValue string) string {
+	if v, ok := e.Attrs[attrKey]; ok {
+		return v
+	}
+
+	return defaultValue
 }

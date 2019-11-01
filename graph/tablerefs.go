@@ -42,3 +42,41 @@ func (g *Graph) AddForeignKeyReferences() error {
 
 	return nil
 }
+
+// MarkJoinTables adds references from all foreign keys to their corresponding tables and columns.
+func (g *Graph) MarkJoinTables() error {
+	// get all tables
+	tables := g.NodesByFilter(func(n *Node) bool {
+		return n.HasAttrValue("type", "table")
+	})
+
+	// for each table:
+	//   get all outgoing edges
+	//   if amount of edges != 2 -> table is not a join table
+	//   if both edges are foreign key edges -> table is a join table
+	for _, table := range tables {
+		edges := g.EdgesByFromWithFilter(table, func(e *Edge) bool {
+			// only match edges with type "tableHasColumn"
+			if !e.HasAttrValue("type", "tableHasColumn") {
+				return false
+			}
+
+			// edge target node must have foreign key edges to other tables and columns
+			foreignKeyTableEdges := g.EdgesByFromWithFilter(e.To, func(e *Edge) bool {
+				return e.HasAttrValue("type", "foreignKeyReferenceTable")
+			})
+			foreignKeyColumnEdges := g.EdgesByFromWithFilter(e.To, func(e *Edge) bool {
+				return e.HasAttrValue("type", "foreignKeyReferenceColumn")
+			})
+
+			return len(foreignKeyTableEdges) == 1 && len(foreignKeyColumnEdges) == 1
+		})
+		if len(edges) == 2 {
+			table.Attrs["isJoinTable"] = "true"
+		} else {
+			table.Attrs["isJoinTable"] = "false"
+		}
+	}
+
+	return nil
+}

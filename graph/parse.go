@@ -19,15 +19,15 @@ func (g *Graph) addStmtColumn(nodeTable *Node, column *parse.Column, tableConstr
 	attrs := map[string]string{
 		"type":             "column",
 		"name":             *column.Name,
-		"nonNull":          "false",
+		"isNonNull":        "false",
 		"valueType":        "",
-		"primaryKey":       "false",
+		"isPrimaryKey":     "false",
 		"foreignKeyTable":  "",
 		"foreignKeyColumn": "",
 	}
 
 	if column.NotNull {
-		attrs["nonNull"] = "true"
+		attrs["isNonNull"] = "true"
 	}
 
 	if column.Type != nil {
@@ -35,7 +35,7 @@ func (g *Graph) addStmtColumn(nodeTable *Node, column *parse.Column, tableConstr
 	}
 
 	if column.PrimaryKey {
-		attrs["primaryKey"] = "true"
+		attrs["isPrimaryKey"] = "true"
 	}
 
 	if column.ForeignKey != nil {
@@ -58,7 +58,7 @@ func (g *Graph) addStmtColumn(nodeTable *Node, column *parse.Column, tableConstr
 			continue
 		}
 
-		attrs["primaryKey"] = "true"
+		attrs["isPrimaryKey"] = "true"
 		break
 	}
 
