@@ -3,14 +3,31 @@ package graph
 import (
 	"fmt"
 	"strings"
-
-	"github.com/pkg/errors"
 )
 
 // Graph consists of nodes and edges.
 type Graph struct {
 	nodes []*Node
 	edges []*Edge
+}
+
+// NewGraph creates a new graph based on SQL statements.
+func NewGraph(sqls []string) (*Graph, error) {
+	g := &Graph{}
+	if err := g.AddStmts(sqls); err != nil {
+		return nil, err
+	}
+	if err := g.AddForeignKeyReferences(); err != nil {
+		return nil, err
+	}
+	if err := g.MarkJoinTables(); err != nil {
+		return nil, err
+	}
+	if err := g.AddObjects(); err != nil {
+		return nil, err
+	}
+
+	return g, nil
 }
 
 // Nodes represents a subset of nodes of a graph.
@@ -202,58 +219,18 @@ func (g *Graph) addEdge(from, to *Node, attrs map[string]string) *Edge {
 	return e
 }
 
-func (g Graph) EdgesByFrom(from *Node) []*Edge {
-	var edges []*Edge
-	for _, e := range g.edges {
-		if e.From == from {
-			edges = append(edges, e)
-		}
-	}
-
-	return edges
-}
-
-func (g Graph) EdgesByFromWithFilter(from *Node, f func(e *Edge) bool) []*Edge {
-	var edges []*Edge
-	for _, e := range g.edges {
-		if e.From == from && f(e) {
-			edges = append(edges, e)
-		}
-	}
-
-	return edges
-}
-
-func (g Graph) NodeByFilter(f func(n *Node) bool) (*Node, error) {
-	for _, n := range g.nodes {
-		if f(n) {
-			return n, nil
-		}
-	}
-
-	return nil, errors.New("no node matched by filter")
-}
-
-func (g Graph) NodesByFilter(f func(n *Node) bool) []*Node {
-	var nodes []*Node
-	for _, n := range g.nodes {
-		if f(n) {
-			nodes = append(nodes, n)
-		}
-	}
-
-	return nodes
-}
-
+// Node is a node in a graph which has attributes.
 type Node struct {
 	Attrs map[string]string
 }
 
+// HasAttrKey returns true if the node has the given attribute key.
 func (n Node) HasAttrKey(attrKey string) bool {
 	_, ok := n.Attrs[attrKey]
 	return ok
 }
 
+// HasAttrValue returns true if the given attribute key of the node contains the given value.
 func (n Node) HasAttrValue(attrKey string, attrValue string) bool {
 	if v, ok := n.Attrs[attrKey]; ok {
 		return v == attrValue
@@ -262,6 +239,7 @@ func (n Node) HasAttrValue(attrKey string, attrValue string) bool {
 	return false
 }
 
+// GetAttrValueDefault returns the value of a given attribute key or the given default if the attribute key does not exist.
 func (n Node) GetAttrValueDefault(attrKey string, defaultValue string) string {
 	if v, ok := n.Attrs[attrKey]; ok {
 		return v
@@ -270,17 +248,20 @@ func (n Node) GetAttrValueDefault(attrKey string, defaultValue string) string {
 	return defaultValue
 }
 
+// Edge is an edge in a graph which has attributes.
 type Edge struct {
 	From  *Node
 	To    *Node
 	Attrs map[string]string
 }
 
+// HasAttrKey returns true if the edge has the given attribute key.
 func (e Edge) HasAttrKey(attrKey string) bool {
 	_, ok := e.Attrs[attrKey]
 	return ok
 }
 
+// HasAttrValue returns true if the given attribute key of the edge contains the given value.
 func (e Edge) HasAttrValue(attrKey string, attrValue string) bool {
 	if v, ok := e.Attrs[attrKey]; ok {
 		return v == attrValue
@@ -289,6 +270,7 @@ func (e Edge) HasAttrValue(attrKey string, attrValue string) bool {
 	return false
 }
 
+// GetAttrValueDefault returns the value of a given attribute key or the given default if the attribute key does not exist.
 func (e Edge) GetAttrValueDefault(attrKey string, defaultValue string) string {
 	if v, ok := e.Attrs[attrKey]; ok {
 		return v

@@ -1,8 +1,6 @@
 package graph
 
 import (
-	"log"
-
 	"github.com/iancoleman/strcase"
 	"github.com/jinzhu/inflection"
 	"github.com/pkg/errors"
@@ -152,8 +150,6 @@ func (g *Graph) addObjectJoinedReferenceFields() error {
 			err = errors.Errorf("wrong amount of columns in table %+v", table.Attrs)
 			return false
 		}
-
-		log.Printf("columns: %+v %+v", columns[0].Attrs, columns[1].Attrs)
 
 		referencedTables := map[*Node]*Node{
 			columns[0]: g.Edges().FilterSource(columns[0]).FilterEdgeType("foreignKeyReferenceTable").Targets().First(),

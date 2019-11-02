@@ -5,19 +5,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-func (g *Graph) getColumnsFromTable(table *Node) []*Node {
-	edges := g.EdgesByFromWithFilter(table, func(e *Edge) bool {
-		return e.HasAttrValue("type", "tableHasColumn") && e.To.HasAttrValue("type", "column")
-	})
-
-	var columns []*Node
-	for _, e := range edges {
-		columns = append(columns, e.To)
-	}
-
-	return columns
-}
-
 func (g *Graph) addStmtColumn(table *Node, column *parse.Column, tableConstraints []parse.TableConstraint) error {
 	if column.Name == nil {
 		return errors.New("unexpected nil column name")
