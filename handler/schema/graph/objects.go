@@ -17,6 +17,7 @@ func (n Nodes) FilterFields() Nodes {
 }
 
 func (g *Graph) addObjectDirectFields(table *Node, object *Node) error {
+	var err error
 	g.Edges().FilterSource(table).FilterEdgeType("tableHasColumn").Targets().ForEach(func(column *Node) bool {
 		foreignKeyTables := g.Edges().FilterSource(column).FilterEdgeType("foreignKeyReferenceTable")
 		foreignKeyColumns := g.Edges().FilterSource(column).FilterEdgeType("foreignKeyReferenceColumn")
@@ -24,11 +25,17 @@ func (g *Graph) addObjectDirectFields(table *Node, object *Node) error {
 			// field that references other object
 			foreignKeyTable := foreignKeyTables.Targets().First()
 			foreignKeyColumn := foreignKeyColumns.Targets().First()
+			referencedObject := g.Edges().FilterTarget(foreignKeyTable).FilterEdgeType("objectHasTable").Targets().First()
+			if referencedObject == nil {
+				err = errors.Errorf("missing object for table %+v", foreignKeyTable.Attrs)
+				return false
+			}
 
 			field := g.addNode(map[string]string{
 				"type":          "field",
 				"name":          inflection.Singular(strcase.ToLowerCamel(foreignKeyTable.GetAttrValueDefault("name", ""))),
 				"referenceType": "forward",
+				"isNonNull":     column.GetAttrValueDefault("isNonNull", "false"),
 			})
 
 			g.addEdge(field, foreignKeyTable, map[string]string{
@@ -36,6 +43,9 @@ func (g *Graph) addObjectDirectFields(table *Node, object *Node) error {
 			})
 			g.addEdge(field, foreignKeyColumn, map[string]string{
 				"type": "fieldReferencesColumn",
+			})
+			g.addEdge(field, referencedObject, map[string]string{
+				"type": "fieldReferencesObject",
 			})
 			g.addEdge(field, table, map[string]string{
 				"type": "fieldHasTable",
@@ -86,7 +96,7 @@ func (g *Graph) addObjectDirectFields(table *Node, object *Node) error {
 		return true
 	})
 
-	return nil
+	return err
 }
 
 func (g *Graph) addObjectBackReferenceFields() error {
@@ -94,6 +104,7 @@ func (g *Graph) addObjectBackReferenceFields() error {
 	g.Nodes().FilterFields().ForEach(func(field *Node) bool {
 		fieldTable := g.Edges().FilterSource(field).FilterEdgeType("fieldHasTable").Targets().First()
 		fieldColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldHasColumn").Targets().First()
+		fieldObject := g.Edges().FilterTarget(field).FilterEdgeType("objectHasField").Sources().First()
 		referencedTable := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesTable").Targets().First()
 		referencedColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesColumn").Targets().First()
 		if fieldTable != nil && fieldColumn != nil && referencedTable != nil && referencedColumn != nil {
@@ -121,6 +132,9 @@ func (g *Graph) addObjectBackReferenceFields() error {
 			})
 			g.addEdge(field, fieldColumn, map[string]string{
 				"type": "fieldReferencesColumn",
+			})
+			g.addEdge(field, fieldObject, map[string]string{
+				"type": "fieldReferencesObject",
 			})
 			g.addEdge(field, referencedTable, map[string]string{
 				"type": "fieldHasTable",
@@ -237,6 +251,14 @@ func (g *Graph) addObjectJoinedReferenceFields() error {
 		})
 		g.addEdge(fields[columns[1]], referencedColumns[columns[0]], map[string]string{
 			"type": "fieldReferencesForeignColumn",
+		})
+
+		// edges to reference others objects
+		g.addEdge(fields[columns[0]], fields[columns[1]], map[string]string{
+			"type": "fieldReferencesObject",
+		})
+		g.addEdge(fields[columns[1]], fields[columns[0]], map[string]string{
+			"type": "fieldReferencesObject",
 		})
 
 		g.addEdge(referencedObjects[columns[0]], fields[columns[0]], map[string]string{
