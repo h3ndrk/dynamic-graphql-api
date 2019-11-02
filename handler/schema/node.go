@@ -4,7 +4,7 @@ import "github.com/graphql-go/graphql"
 
 var node *graphql.Interface
 
-func initNode() error {
+func initNode() {
 	node = graphql.NewInterface(graphql.InterfaceConfig{
 		Name: "Node",
 		Fields: graphql.Fields{
@@ -13,6 +13,4 @@ func initNode() error {
 			},
 		},
 	})
-
-	return nil
 }

@@ -8,7 +8,7 @@ import (
 
 var pageInfo *graphql.Object
 
-func initPageInfo() error {
+func initPageInfo() {
 	pageInfo = graphql.NewObject(graphql.ObjectConfig{
 		Name:        "PageInfo",
 		Description: "Information about pagination in a connection.",
@@ -63,6 +63,4 @@ func initPageInfo() error {
 			},
 		},
 	})
-
-	return nil
 }
