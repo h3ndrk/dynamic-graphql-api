@@ -46,7 +46,7 @@ func initPageInfo() error {
 						return nil, errors.New("Malformed source")
 					}
 
-					return connection.startCursor, nil
+					return connection.startCursor.OpaqueString(), nil
 				},
 			},
 			"endCursor": &graphql.Field{
@@ -58,7 +58,7 @@ func initPageInfo() error {
 						return nil, errors.New("Malformed source")
 					}
 
-					return connection.endCursor, nil
+					return connection.endCursor.OpaqueString(), nil
 				},
 			},
 		},

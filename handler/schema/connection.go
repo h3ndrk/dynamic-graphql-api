@@ -4,8 +4,8 @@ type connection struct {
 	// PageInfo
 	hasNextPage     bool
 	hasPreviousPage bool
-	startCursor     string
-	endCursor       string
+	startCursor     cursor
+	endCursor       cursor
 
 	// Edges
 	edges []cursor

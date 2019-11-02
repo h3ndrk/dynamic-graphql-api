@@ -222,7 +222,7 @@ func extractIDFromCursor(cursor, objType string) (uint, error) {
 		return 0, errors.Errorf("Invalid cursor '%s'", cursor)
 	}
 
-	stringID := strings.TrimPrefix(string(bytesCursor), "SubstanceAllowance:")
+	stringID := strings.TrimPrefix(string(bytesCursor), "SubstanceAllowance:") // TODO: use objType
 	if stringID == cursor {
 		return 0, errors.Errorf("Invalid cursor '%s'", cursor)
 	}
