@@ -1,9 +1,22 @@
 package graph
 
 import (
+	"log"
+
 	"github.com/iancoleman/strcase"
 	"github.com/jinzhu/inflection"
+	"github.com/pkg/errors"
 )
+
+// FilterObjects filters nodes whether they are a object.
+func (n Nodes) FilterObjects() Nodes {
+	return n.FilterNodeType("object")
+}
+
+// FilterFields filters nodes whether they are a field.
+func (n Nodes) FilterFields() Nodes {
+	return n.FilterNodeType("field")
+}
 
 func (g *Graph) addObjectDirectFields(table *Node, object *Node) error {
 	g.Edges().FilterSource(table).FilterEdgeType("tableHasColumn").Targets().ForEach(func(column *Node) bool {
@@ -15,9 +28,9 @@ func (g *Graph) addObjectDirectFields(table *Node, object *Node) error {
 			foreignKeyColumn := foreignKeyColumns.Targets().First()
 
 			field := g.addNode(map[string]string{
-				"type":        "field",
-				"name":        strcase.ToLowerCamel(inflection.Singular(foreignKeyTable.GetAttrValueDefault("name", ""))),
-				"isReference": "true",
+				"type":          "field",
+				"name":          inflection.Singular(strcase.ToLowerCamel(foreignKeyTable.GetAttrValueDefault("name", ""))),
+				"referenceType": "forward",
 			})
 
 			g.addEdge(field, foreignKeyTable, map[string]string{
@@ -26,21 +39,16 @@ func (g *Graph) addObjectDirectFields(table *Node, object *Node) error {
 			g.addEdge(field, foreignKeyColumn, map[string]string{
 				"type": "fieldReferencesColumn",
 			})
+			g.addEdge(field, table, map[string]string{
+				"type": "fieldHasTable",
+			})
+			g.addEdge(field, column, map[string]string{
+				"type": "fieldHasColumn",
+			})
 
 			g.addEdge(object, field, map[string]string{
 				"type": "objectHasField",
 			})
-			// one-to-x field, now determine the x (one of: one, many)
-			// search for back-reference for one-to-one
-			// foreignKeyTable := foreignKeyTables.Targets().First()
-			// foreignKeyColumns := g.Edges().FilterSource(foreignKeyTable).FilterEdgeType("tableHasColumn").Targets().Filter(func(foreignColumn *Node) bool {
-			// 	return g.Edges().FilterSource(foreignColumn).FilterTarget(table).FilterEdgeType("foreignKeyReferenceTable").Len() == 1
-			// })
-			// if foreignKeyColumns.Len() == 1 {
-			// 	// found back-reference -> one-to-one
-
-			// }
-
 		} else {
 			// scalar field
 			valueType := "String"
@@ -60,10 +68,16 @@ func (g *Graph) addObjectDirectFields(table *Node, object *Node) error {
 			}
 
 			field := g.addNode(map[string]string{
-				"type":        "field",
-				"name":        strcase.ToLowerCamel(column.GetAttrValueDefault("name", "")),
-				"isReference": "false",
-				"valueType":   valueType,
+				"type":      "field",
+				"name":      strcase.ToLowerCamel(column.GetAttrValueDefault("name", "")),
+				"valueType": valueType,
+			})
+
+			g.addEdge(field, table, map[string]string{
+				"type": "fieldHasTable",
+			})
+			g.addEdge(field, column, map[string]string{
+				"type": "fieldHasColumn",
 			})
 
 			g.addEdge(object, field, map[string]string{
@@ -77,6 +91,171 @@ func (g *Graph) addObjectDirectFields(table *Node, object *Node) error {
 	return nil
 }
 
+func (g *Graph) addObjectBackReferenceFields() error {
+	var err error
+	g.Nodes().FilterFields().ForEach(func(field *Node) bool {
+		fieldTable := g.Edges().FilterSource(field).FilterEdgeType("fieldHasTable").Targets().First()
+		fieldColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldHasColumn").Targets().First()
+		referencedTable := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesTable").Targets().First()
+		referencedColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesColumn").Targets().First()
+		if fieldTable != nil && fieldColumn != nil && referencedTable != nil && referencedColumn != nil {
+			referencedObject := g.Edges().FilterTarget(referencedTable).FilterEdgeType("objectHasTable").Targets().First()
+			if referencedObject == nil {
+				err = errors.Errorf("missing object for table %+v", referencedTable.Attrs)
+				return false
+			}
+
+			// check that field does not exist already
+			fieldName := inflection.Plural(strcase.ToLowerCamel(field.GetAttrValueDefault("name", "") + "_" + fieldTable.GetAttrValueDefault("name", "")))
+			if g.Nodes().FilterFields().FilterName(fieldName).Len() != 0 {
+				err = errors.Errorf("field %s (attempting to create back-reference) already exists in object %+v", fieldName, referencedObject.Attrs)
+				return false
+			}
+
+			field := g.addNode(map[string]string{
+				"type":          "field",
+				"name":          fieldName,
+				"referenceType": "backward",
+			})
+
+			g.addEdge(field, fieldTable, map[string]string{
+				"type": "fieldReferencesTable",
+			})
+			g.addEdge(field, fieldColumn, map[string]string{
+				"type": "fieldReferencesColumn",
+			})
+			g.addEdge(field, referencedTable, map[string]string{
+				"type": "fieldHasTable",
+			})
+			g.addEdge(field, referencedColumn, map[string]string{
+				"type": "fieldHasColumn",
+			})
+
+			g.addEdge(referencedObject, field, map[string]string{
+				"type": "objectHasField",
+			})
+		}
+
+		return true
+	})
+
+	return err
+}
+
+func (g *Graph) addObjectJoinedReferenceFields() error {
+	var err error
+	g.Nodes().FilterTables().Filter(func(n *Node) bool {
+		return n.HasAttrValue("isJoinTable", "true")
+	}).ForEach(func(table *Node) bool {
+		columns := g.Edges().FilterSource(table).FilterEdgeType("tableHasColumn").Targets().All()
+		if len(columns) != 2 {
+			err = errors.Errorf("wrong amount of columns in table %+v", table.Attrs)
+			return false
+		}
+
+		log.Printf("columns: %+v %+v", columns[0].Attrs, columns[1].Attrs)
+
+		referencedTables := map[*Node]*Node{
+			columns[0]: g.Edges().FilterSource(columns[0]).FilterEdgeType("foreignKeyReferenceTable").Targets().First(),
+			columns[1]: g.Edges().FilterSource(columns[1]).FilterEdgeType("foreignKeyReferenceTable").Targets().First(),
+		}
+		if referencedTables[columns[0]] == nil || referencedTables[columns[1]] == nil {
+			err = errors.Errorf("failed to find referenced tables of table %+v", table.Attrs)
+			return false
+		}
+
+		referencedColumns := map[*Node]*Node{
+			columns[0]: g.Edges().FilterSource(columns[0]).FilterEdgeType("foreignKeyReferenceColumn").Targets().First(),
+			columns[1]: g.Edges().FilterSource(columns[1]).FilterEdgeType("foreignKeyReferenceColumn").Targets().First(),
+		}
+		if referencedColumns[columns[0]] == nil || referencedColumns[columns[1]] == nil {
+			err = errors.Errorf("failed to find referenced columns of table %+v", table.Attrs)
+			return false
+		}
+
+		referencedObjects := map[*Node]*Node{
+			columns[0]: g.Edges().FilterTarget(referencedTables[columns[0]]).FilterEdgeType("objectHasTable").Targets().First(),
+			columns[1]: g.Edges().FilterTarget(referencedTables[columns[1]]).FilterEdgeType("objectHasTable").Targets().First(),
+		}
+		if referencedObjects[columns[0]] == nil || referencedObjects[columns[1]] == nil {
+			err = errors.Errorf("failed to find referenced objects of table %+v", table.Attrs)
+			return false
+		}
+
+		fields := map[*Node]*Node{
+			columns[0]: g.addNode(map[string]string{
+				"type":          "field",
+				"name":          inflection.Plural(strcase.ToLowerCamel(columns[1].GetAttrValueDefault("name", ""))),
+				"referenceType": "joined",
+			}),
+			columns[1]: g.addNode(map[string]string{
+				"type":          "field",
+				"name":          inflection.Plural(strcase.ToLowerCamel(columns[0].GetAttrValueDefault("name", ""))),
+				"referenceType": "joined",
+			}),
+		}
+
+		// edges to reference join table and columns
+		g.addEdge(fields[columns[0]], table, map[string]string{
+			"type": "fieldReferencesJoinTable",
+		})
+		g.addEdge(fields[columns[1]], table, map[string]string{
+			"type": "fieldReferencesJoinTable",
+		})
+		g.addEdge(fields[columns[0]], columns[0], map[string]string{
+			"type": "fieldReferencesOwnJoinColumn",
+		})
+		g.addEdge(fields[columns[1]], columns[1], map[string]string{
+			"type": "fieldReferencesOwnJoinColumn",
+		})
+		g.addEdge(fields[columns[0]], columns[1], map[string]string{
+			"type": "fieldReferencesForeignJoinColumn",
+		})
+		g.addEdge(fields[columns[1]], columns[0], map[string]string{
+			"type": "fieldReferencesForeignJoinColumn",
+		})
+
+		// edges to reference own table and columns
+		g.addEdge(fields[columns[0]], referencedTables[columns[0]], map[string]string{
+			"type": "fieldReferencesOwnTable",
+		})
+		g.addEdge(fields[columns[1]], referencedTables[columns[1]], map[string]string{
+			"type": "fieldReferencesOwnTable",
+		})
+		g.addEdge(fields[columns[0]], referencedColumns[columns[0]], map[string]string{
+			"type": "fieldReferencesOwnColumn",
+		})
+		g.addEdge(fields[columns[1]], referencedColumns[columns[1]], map[string]string{
+			"type": "fieldReferencesOwnColumn",
+		})
+
+		// edges to reference foreign table and columns
+		g.addEdge(fields[columns[0]], referencedTables[columns[1]], map[string]string{
+			"type": "fieldReferencesForeignTable",
+		})
+		g.addEdge(fields[columns[1]], referencedTables[columns[0]], map[string]string{
+			"type": "fieldReferencesForeignTable",
+		})
+		g.addEdge(fields[columns[0]], referencedColumns[columns[1]], map[string]string{
+			"type": "fieldReferencesForeignColumn",
+		})
+		g.addEdge(fields[columns[1]], referencedColumns[columns[0]], map[string]string{
+			"type": "fieldReferencesForeignColumn",
+		})
+
+		g.addEdge(referencedObjects[columns[0]], fields[columns[0]], map[string]string{
+			"type": "objectHasField",
+		})
+		g.addEdge(referencedObjects[columns[1]], fields[columns[1]], map[string]string{
+			"type": "objectHasField",
+		})
+
+		return true
+	})
+
+	return err
+}
+
 // AddObjects to graph.
 func (g *Graph) AddObjects() error {
 	// get all non-join tables, for each table:
@@ -87,7 +266,7 @@ func (g *Graph) AddObjects() error {
 	}).ForEach(func(table *Node) bool {
 		object := g.addNode(map[string]string{
 			"type": "object",
-			"name": strcase.ToCamel(inflection.Singular(table.GetAttrValueDefault("name", ""))),
+			"name": inflection.Singular(strcase.ToCamel(table.GetAttrValueDefault("name", ""))),
 		})
 
 		g.addEdge(object, table, map[string]string{
@@ -101,6 +280,13 @@ func (g *Graph) AddObjects() error {
 
 		return true
 	})
+	if err != nil {
+		return err
+	}
 
-	return err
+	if err := g.addObjectBackReferenceFields(); err != nil {
+		return err
+	}
+
+	return g.addObjectJoinedReferenceFields()
 }
