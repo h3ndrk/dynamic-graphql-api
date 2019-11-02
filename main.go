@@ -13,6 +13,7 @@ import (
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/handler"
 	"github.com/h3ndrk/dynamic-graphql-api/associations"
+	"github.com/h3ndrk/dynamic-graphql-api/graph"
 	"github.com/iancoleman/strcase"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/pkg/errors"
@@ -76,6 +77,11 @@ func (n nodeCursor) String() string {
 
 func (n nodeCursor) OpaqueString() string {
 	return base64.StdEncoding.EncodeToString([]byte(n.String()))
+}
+
+type mutationPayload struct {
+	clientMutationID string
+	cursor           nodeCursor
 }
 
 type connection struct {
@@ -308,6 +314,13 @@ func main() {
 
 	fmt.Printf("%+v\n", sqls)
 
+	objectGraph, err := graph.NewGraph(sqls)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("%s\n", objectGraph)
+
 	a, err := associations.Evaluate(sqls)
 	if err != nil {
 		panic(err)
@@ -472,10 +485,10 @@ func main() {
 				}
 			case associations.OneToOne, associations.OneToMany:
 				objFieldType = graphqlObjects[currentField.Association]
-				fieldName = strcase.ToSnake(currentField.Association)
+				fieldName = strcase.ToLowerCamel(currentField.Association)
 			case associations.ManyToOne, associations.ManyToMany:
 				objFieldType = graphql.NewNonNull(graphqlConnections[currentField.Association])
-				fieldName = strcase.ToSnake(currentField.Association) + "s"
+				fieldName = strcase.ToLowerCamel(currentField.Association) + "s"
 				objFieldArgs = graphql.FieldConfigArgument{
 					"before": &graphql.ArgumentConfig{
 						Type: graphql.String,
@@ -720,7 +733,7 @@ func main() {
 		Fields: graphql.Fields{},
 	})
 	for name := range graphqlObjects {
-		query.AddFieldConfig(strcase.ToSnake(name)+"s", &graphql.Field{
+		query.AddFieldConfig(strcase.ToLowerCamel(name)+"s", &graphql.Field{
 			Type: graphql.NewNonNull(graphqlConnections[name]),
 			Args: graphql.FieldConfigArgument{
 				"before": &graphql.ArgumentConfig{
@@ -840,7 +853,173 @@ func main() {
 		},
 	})
 
-	schema, err := graphql.NewSchema(graphql.SchemaConfig{Query: query})
+	mutation := graphql.NewObject(graphql.ObjectConfig{
+		Name:   "Mutation",
+		Fields: graphql.Fields{},
+	})
+	for _, obj := range a.Objects {
+		currentObj := obj // fix closure
+
+		inputFields := graphql.InputObjectConfigFieldMap{}
+		// inputUpdateFields := graphql.InputObjectConfigFieldMap{}
+		for _, field := range currentObj.Fields {
+			currentField := field // fix closure
+
+			var fieldType graphql.Output
+			fieldName := currentField.Name
+
+			switch currentField.AssociationType {
+			case associations.Identification:
+				// fieldType = graphql.NewNonNull(graphql.ID)
+				continue
+			case associations.Scalar:
+				switch currentField.Association {
+				case "INTEGER":
+					fieldType = graphql.Int
+				case "TEXT", "BLOB":
+					fieldType = graphql.String
+				case "REAL", "NUMERIC":
+					fieldType = graphql.Float
+				default:
+					panic("unsupported type")
+				}
+			case associations.OneToOne, associations.OneToMany:
+				fieldType = graphql.ID // graphqlObjects[currentField.Association]
+				fieldName = strcase.ToLowerCamel(currentField.Association + "_id")
+			case associations.ManyToOne, associations.ManyToMany:
+				// fieldType = graphql.NewNonNull(graphql.ID) // graphql.NewNonNull(graphqlConnections[currentField.Association])
+				// fieldName = strcase.ToLowerCamel(currentField.Association + "_id") + "s"
+				continue
+			default:
+				panic("unsupported type")
+			}
+
+			if currentField.NonNull {
+				fieldType = graphql.NewNonNull(fieldType)
+			}
+
+			inputFields[fieldName] = &graphql.InputObjectFieldConfig{
+				Type: fieldType,
+			}
+		}
+
+		inputFields["clientMutationId"] = &graphql.InputObjectFieldConfig{
+			Type: graphql.NewNonNull(graphql.String),
+		}
+
+		input := graphql.NewInputObject(graphql.InputObjectConfig{
+			Name:   currentObj.Name + "Input",
+			Fields: inputFields,
+		})
+
+		payload := graphql.NewObject(graphql.ObjectConfig{
+			Name: currentObj.Name + "Payload",
+			Fields: graphql.Fields{
+				"clientMutationId": &graphql.Field{
+					Type: graphql.NewNonNull(graphql.String),
+					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+						payload, ok := p.Source.(mutationPayload)
+						if !ok {
+							return nil, errors.New("Malformed source")
+						}
+
+						return payload.clientMutationID, nil
+					},
+				},
+				strcase.ToLowerCamel(currentObj.Name): &graphql.Field{
+					Type: graphql.NewNonNull(graphqlObjects[currentObj.Name]),
+					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+						payload, ok := p.Source.(mutationPayload)
+						if !ok {
+							return nil, errors.New("Malformed source")
+						}
+
+						return payload.cursor, nil
+					},
+				},
+			},
+		})
+
+		mutation.AddFieldConfig(strcase.ToLowerCamel("create_"+currentObj.Name), &graphql.Field{
+			Type: graphql.NewNonNull(payload),
+			Args: graphql.FieldConfigArgument{
+				"input": &graphql.ArgumentConfig{
+					Type: graphql.NewNonNull(input),
+				},
+			},
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				// db, err := getDBFromContext(p.Context)
+				// if err != nil {
+				// 	return nil, err
+				// }
+
+				inputInterface, ok := p.Args["input"]
+				if !ok {
+					return nil, errors.New("Missing input")
+				}
+				input, ok := inputInterface.(map[string]interface{})
+				if !ok {
+					return nil, errors.New("Malformed input")
+				}
+
+				// INSERT INTO ...
+
+				// before, after, first, last, err := getConnectionArgs(p, name)
+				// if err != nil {
+				// 	return nil, err
+				// }
+
+				// rows, hasPreviousPage, hasNextPage, err := getRowsWithPagination(
+				// 	p.Context, db, before, after, first, last,
+				// 	"SELECT id FROM "+name)
+				// if err != nil {
+				// 	return nil, err
+				// }
+				// defer rows.Close()
+
+				// var (
+				// 	id    uint
+				// 	rowID uint
+				// 	conn  connection
+				// )
+				// for rows.Next() {
+				// 	if err := rows.Scan(&id, &rowID); err != nil {
+				// 		return nil, err
+				// 	}
+
+				// 	conn.edges = append(conn.edges, nodeCursor{object: name, id: id})
+				// }
+
+				// if err := rows.Err(); err != nil {
+				// 	return nil, err
+				// }
+
+				// if len(conn.edges) > 0 {
+				// 	conn.startCursor = conn.edges[0].OpaqueString()
+				// }
+
+				// if len(conn.edges) > 0 {
+				// 	conn.endCursor = conn.edges[len(conn.edges)-1].OpaqueString()
+				// }
+
+				// conn.hasPreviousPage = hasPreviousPage
+				// conn.hasNextPage = hasNextPage
+
+				var payload mutationPayload
+				payload.cursor = nodeCursor{object: currentObj.Name, id: 1}
+
+				if clientMutationID, ok := input["clientMutationId"]; ok {
+					if clientMutationID, ok := clientMutationID.(string); ok {
+						payload.clientMutationID = clientMutationID
+					}
+				}
+
+				return payload, nil
+			},
+		})
+	}
+
+	schema, err := graphql.NewSchema(graphql.SchemaConfig{Query: query, Mutation: mutation})
 	if err != nil {
 		panic(err)
 	}
