@@ -5,7 +5,20 @@ import (
 	"github.com/pkg/errors"
 )
 
-func (g *Graph) addStmtColumn(nodeTable *Node, column *parse.Column, tableConstraints []parse.TableConstraint) error {
+func (g *Graph) getColumnsFromTable(table *Node) []*Node {
+	edges := g.EdgesByFromWithFilter(table, func(e *Edge) bool {
+		return e.HasAttrValue("type", "tableHasColumn") && e.To.HasAttrValue("type", "column")
+	})
+
+	var columns []*Node
+	for _, e := range edges {
+		columns = append(columns, e.To)
+	}
+
+	return columns
+}
+
+func (g *Graph) addStmtColumn(table *Node, column *parse.Column, tableConstraints []parse.TableConstraint) error {
 	if column.Name == nil {
 		return errors.New("unexpected nil column name")
 	}
@@ -88,25 +101,25 @@ func (g *Graph) addStmtColumn(nodeTable *Node, column *parse.Column, tableConstr
 		break
 	}
 
-	nodeColumn := g.AddNode(attrs)
-	g.AddEdge(nodeTable, nodeColumn, map[string]string{
+	nodeColumn := g.addNode(attrs)
+	g.addEdge(table, nodeColumn, map[string]string{
 		"type": "tableHasColumn",
 	})
 	return nil
 }
 
-func (g *Graph) addStmtTable(table *parse.Table) error {
-	if table.Name == nil {
+func (g *Graph) addStmtTable(t *parse.Table) error {
+	if t.Name == nil {
 		return errors.New("unexpected nil table name")
 	}
 
-	nodeTable := g.AddNode(map[string]string{
+	table := g.addNode(map[string]string{
 		"type": "table",
-		"name": *table.Name,
+		"name": *t.Name,
 	})
 
-	for i, column := range table.Columns {
-		if err := g.addStmtColumn(nodeTable, &column, table.TableConstraints); err != nil {
+	for i, column := range t.Columns {
+		if err := g.addStmtColumn(table, &column, t.TableConstraints); err != nil {
 			return errors.Wrapf(err, "failed to add column %d", i)
 		}
 	}
