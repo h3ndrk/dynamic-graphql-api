@@ -241,7 +241,6 @@ func addFields(g *graph.Graph) error {
 					}
 
 					if field.GetAttrValueDefault("referenceType", "") == "forward" {
-						fmt.Printf("querying %s.%s for resolving %s.%s:%s\n", referencedTable.GetAttrValueDefault("name", ""), referencedColumn.GetAttrValueDefault("name", ""), objName, fieldName, fieldType.Name())
 						id, err := db.ScalarIntQuery(db.ScalarRequest{
 							Ctx: p.Context,
 							DB:  dbFromContext,

@@ -27,11 +27,8 @@ func ScalarIntQuery(r ScalarRequest) (interface{}, error) {
 	}
 
 	if !value.Valid {
-		fmt.Printf("returning null\n")
 		return nil, nil
 	}
-
-	fmt.Printf("returning %d\n", value.Int64)
 
 	return value.Int64, nil
 }
