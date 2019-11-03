@@ -1,11 +1,13 @@
 package schema
 
 import (
+	"dynamic-graphql-api/handler/schema/db"
 	"dynamic-graphql-api/handler/schema/graph"
 
 	"github.com/graphql-go/graphql"
 	"github.com/iancoleman/strcase"
 	"github.com/jinzhu/inflection"
+	"github.com/pkg/errors"
 )
 
 var query *graphql.Object
@@ -24,7 +26,44 @@ func initQuery(g *graph.Graph) {
 			Type: graphql.NewNonNull(graphqlConnections[objName]),
 			Args: connectionArgs,
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				return connection{}, nil
+				dbFromContext, err := getDBFromContext(p.Context)
+				if err != nil {
+					return nil, err
+				}
+
+				referencedTable := g.Edges().FilterSource(obj).FilterEdgeType("objectHasTable").Targets().First()
+				if referencedTable == nil {
+					return nil, errors.New("referenced table not found")
+				}
+
+				result := db.PaginationQuery(db.PaginationRequest{
+					Ctx: p.Context,
+					DB:  dbFromContext,
+
+					Table:  referencedTable.GetAttrValueDefault("name", ""),
+					Column: "id",
+				})
+				if result.Err != nil {
+					return nil, result.Err
+				}
+
+				var conn connection
+				for _, id := range result.IDs {
+					conn.edges = append(conn.edges, cursor{object: objName, id: id})
+				}
+
+				if len(conn.edges) > 0 {
+					conn.startCursor = conn.edges[0]
+				}
+
+				if len(conn.edges) > 0 {
+					conn.endCursor = conn.edges[len(conn.edges)-1]
+				}
+
+				conn.hasPreviousPage = result.HasPreviousPage
+				conn.hasNextPage = result.HasNextPage
+
+				return conn, nil
 			},
 		})
 
