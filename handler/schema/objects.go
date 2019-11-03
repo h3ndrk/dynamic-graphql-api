@@ -42,7 +42,7 @@ func createObjects(g *graph.Graph) {
 					},
 				},
 				"cursor": &graphql.Field{
-					Type:        graphql.NewNonNull(graphql.String),
+					Type:        graphql.NewNonNull(graphql.ID),
 					Description: "A cursor for use in pagination.",
 					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 						c, ok := p.Source.(cursor)

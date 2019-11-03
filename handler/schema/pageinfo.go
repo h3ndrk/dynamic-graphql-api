@@ -38,7 +38,7 @@ func initPageInfo() {
 				},
 			},
 			"startCursor": &graphql.Field{
-				Type:        graphql.NewNonNull(graphql.String),
+				Type:        graphql.NewNonNull(graphql.ID),
 				Description: "When paginating backwards, the cursor to continue.",
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					connection, ok := p.Source.(connection)
@@ -50,7 +50,7 @@ func initPageInfo() {
 				},
 			},
 			"endCursor": &graphql.Field{
-				Type:        graphql.NewNonNull(graphql.String),
+				Type:        graphql.NewNonNull(graphql.ID),
 				Description: "When paginating forwards, the cursor to continue.",
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					connection, ok := p.Source.(connection)
