@@ -42,8 +42,10 @@ func initQuery(g *graph.Graph) error {
 					Ctx: p.Context,
 					DB:  dbFromContext,
 
-					Table:  referencedTable.GetAttrValueDefault("name", ""),
-					Column: "id",
+					Metadata: db.PaginationRequestForwardMetadata{
+						Table:  referencedTable.GetAttrValueDefault("name", ""),
+						Column: "id",
+					},
 				})
 				if result.Err != nil {
 					return nil, result.Err

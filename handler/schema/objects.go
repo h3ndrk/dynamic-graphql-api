@@ -168,6 +168,16 @@ func addFields(g *graph.Graph) error {
 				err = errors.Errorf("referenced column not found while resolving field %s.%s:%s", objName, fieldName, fieldType.Name())
 				return false
 			}
+			foreignTable := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesTable").Targets().First()
+			if field.GetAttrValueDefault("referenceType", "") == "backward" && foreignTable == nil {
+				err = errors.Errorf("referenced foreign table not found while resolving field %s.%s:%s", objName, fieldName, fieldType.Name())
+				return false
+			}
+			foreignColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesColumn").Targets().First()
+			if field.GetAttrValueDefault("referenceType", "") == "backward" && foreignColumn == nil {
+				err = errors.Errorf("referenced foreign column not found while resolving field %s.%s:%s", objName, fieldName, fieldType.Name())
+				return false
+			}
 
 			fmt.Printf("Adding field %s.%s:%s ...\n", objName, fieldName, fieldType.Name())
 
@@ -258,6 +268,41 @@ func addFields(g *graph.Graph) error {
 						}
 
 						return nil, nil
+					}
+
+					if field.GetAttrValueDefault("referenceType", "") == "backward" {
+						result := db.PaginationQuery(db.PaginationRequest{
+							Ctx: p.Context,
+							DB:  dbFromContext,
+
+							Metadata: db.PaginationRequestBackwardMetadata{
+								ForeignTable:           foreignTable.GetAttrValueDefault("name", ""),
+								ForeignReferenceColumn: foreignColumn.GetAttrValueDefault("name", ""),
+								ForeignReturnColumn:    "id",
+								OwnReferenceColumn:     c.id,
+							},
+						})
+						if result.Err != nil {
+							return nil, result.Err
+						}
+
+						var conn connection
+						for _, id := range result.IDs {
+							conn.edges = append(conn.edges, cursor{object: objName, id: id})
+						}
+
+						if len(conn.edges) > 0 {
+							conn.startCursor = conn.edges[0]
+						}
+
+						if len(conn.edges) > 0 {
+							conn.endCursor = conn.edges[len(conn.edges)-1]
+						}
+
+						conn.hasPreviousPage = result.HasPreviousPage
+						conn.hasNextPage = result.HasNextPage
+
+						return conn, nil
 					}
 
 					return nil, nil

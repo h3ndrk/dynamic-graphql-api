@@ -9,13 +9,38 @@ import (
 	"github.com/pkg/errors"
 )
 
+// PaginationRequestMetadata represents the metadata for a query.
+type PaginationRequestMetadata interface {
+	IsPaginationRequestMetadata()
+}
+
+// PaginationRequestForwardMetadata represents the metadata for forward references.
+type PaginationRequestForwardMetadata struct {
+	Table  string
+	Column string
+}
+
+// IsPaginationRequestMetadata is used for interface constraining.
+func (PaginationRequestForwardMetadata) IsPaginationRequestMetadata() {}
+
+// PaginationRequestBackwardMetadata represents the metadata for forward references.
+// Example: SELECT {ForeignReturnColumn} FROM {ForeignTable} WHERE {ForeignReferenceColumn} = {OwnReferenceColumn}
+type PaginationRequestBackwardMetadata struct {
+	ForeignTable           string
+	ForeignReferenceColumn string
+	ForeignReturnColumn    string
+	OwnReferenceColumn     interface{}
+}
+
+// IsPaginationRequestMetadata is used for interface constraining.
+func (PaginationRequestBackwardMetadata) IsPaginationRequestMetadata() {}
+
 // PaginationRequest describes the query.
 type PaginationRequest struct {
 	Ctx context.Context
 	DB  *sql.DB
 
-	Table  string
-	Column string
+	Metadata PaginationRequestMetadata
 
 	Before *uint
 	After  *uint
@@ -59,8 +84,17 @@ func PaginationQuery(r PaginationRequest) PaginationResult {
 		r.Last = nil
 	}
 
-	query := fmt.Sprintf("SELECT %s FROM %s", r.Column, r.Table)
-	args := []interface{}{}
+	var query string
+	var args []interface{}
+	switch metadata := r.Metadata.(type) {
+	case PaginationRequestForwardMetadata:
+		query = fmt.Sprintf("SELECT %s FROM %s", metadata.Column, metadata.Table)
+	case PaginationRequestBackwardMetadata:
+		query = fmt.Sprintf("SELECT %s FROM %s WHERE %s = ?", metadata.ForeignReturnColumn, metadata.ForeignTable, metadata.ForeignReferenceColumn)
+		args = []interface{}{metadata.OwnReferenceColumn}
+	default:
+		return PaginationResult{Err: errors.Errorf("unknown metadata type %T", metadata)}
+	}
 
 	// count rows in table
 	var count uint
