@@ -53,6 +53,7 @@ func initQuery(g *graph.Graph) error {
 					return nil, result.Err
 				}
 
+				// TODO: abstract result -> connection conversion
 				var conn connection
 				for _, id := range result.IDs {
 					conn.edges = append(conn.edges, cursor{object: objName, id: id})
