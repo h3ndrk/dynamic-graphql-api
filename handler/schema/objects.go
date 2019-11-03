@@ -178,6 +178,21 @@ func addFields(g *graph.Graph) error {
 				err = errors.Errorf("referenced foreign column not found while resolving field %s.%s:%s", objName, fieldName, fieldType.Name())
 				return false
 			}
+			joinTable := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesJoinTable").Targets().First()
+			if field.GetAttrValueDefault("referenceType", "") == "joined" && joinTable == nil {
+				err = errors.Errorf("referenced join table not found while resolving field %s.%s:%s", objName, fieldName, fieldType.Name())
+				return false
+			}
+			joinOwnColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesOwnJoinColumn").Targets().First()
+			if field.GetAttrValueDefault("referenceType", "") == "joined" && joinOwnColumn == nil {
+				err = errors.Errorf("referenced own join column not found while resolving field %s.%s:%s", objName, fieldName, fieldType.Name())
+				return false
+			}
+			joinForeignColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesForeignJoinColumn").Targets().First()
+			if field.GetAttrValueDefault("referenceType", "") == "joined" && joinForeignColumn == nil {
+				err = errors.Errorf("referenced foreign join column not found while resolving field %s.%s:%s", objName, fieldName, fieldType.Name())
+				return false
+			}
 
 			fmt.Printf("Adding field %s.%s:%s ...\n", objName, fieldName, fieldType.Name())
 
@@ -280,6 +295,43 @@ func addFields(g *graph.Graph) error {
 								ForeignReferenceColumn: foreignColumn.GetAttrValueDefault("name", ""),
 								ForeignReturnColumn:    "id",
 								OwnReferenceColumn:     c.id,
+							},
+
+							// TODO: arguments
+						})
+						if result.Err != nil {
+							return nil, result.Err
+						}
+
+						var conn connection
+						for _, id := range result.IDs {
+							conn.edges = append(conn.edges, cursor{object: objName, id: id})
+						}
+
+						if len(conn.edges) > 0 {
+							conn.startCursor = conn.edges[0]
+						}
+
+						if len(conn.edges) > 0 {
+							conn.endCursor = conn.edges[len(conn.edges)-1]
+						}
+
+						conn.hasPreviousPage = result.HasPreviousPage
+						conn.hasNextPage = result.HasNextPage
+
+						return conn, nil
+					}
+
+					if field.GetAttrValueDefault("referenceType", "") == "joined" {
+						result := db.PaginationQuery(db.PaginationRequest{
+							Ctx: p.Context,
+							DB:  dbFromContext,
+
+							Metadata: db.PaginationRequestJoinedMetadata{
+								JoinTable:     joinTable.GetAttrValueDefault("name", ""),
+								ForeignColumn: joinForeignColumn.GetAttrValueDefault("name", ""),
+								OwnColumn:     joinOwnColumn.GetAttrValueDefault("name", ""),
+								OwnValue:      c.id,
 							},
 
 							// TODO: arguments

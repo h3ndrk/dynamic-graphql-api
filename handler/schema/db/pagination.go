@@ -35,6 +35,18 @@ type PaginationRequestBackwardMetadata struct {
 // IsPaginationRequestMetadata is used for interface constraining.
 func (PaginationRequestBackwardMetadata) IsPaginationRequestMetadata() {}
 
+// PaginationRequestJoinedMetadata represents the metadata for joined references.
+// Example: SELECT {ForeignColumn} FROM {JoinTable} WHERE {OwnColumn} = {OwnValue}
+type PaginationRequestJoinedMetadata struct {
+	JoinTable     string
+	ForeignColumn string
+	OwnColumn     string
+	OwnValue      interface{}
+}
+
+// IsPaginationRequestMetadata is used for interface constraining.
+func (PaginationRequestJoinedMetadata) IsPaginationRequestMetadata() {}
+
 // PaginationRequest describes the query.
 type PaginationRequest struct {
 	Ctx context.Context
@@ -92,6 +104,9 @@ func PaginationQuery(r PaginationRequest) PaginationResult {
 	case PaginationRequestBackwardMetadata:
 		query = fmt.Sprintf("SELECT %s FROM %s WHERE %s = ?", metadata.ForeignReturnColumn, metadata.ForeignTable, metadata.ForeignReferenceColumn)
 		args = []interface{}{metadata.OwnReferenceColumn}
+	case PaginationRequestJoinedMetadata:
+		query = fmt.Sprintf("SELECT %s FROM %s WHERE %s = ?", metadata.ForeignColumn, metadata.JoinTable, metadata.OwnColumn)
+		args = []interface{}{metadata.OwnValue}
 	default:
 		return PaginationResult{Err: errors.Errorf("unknown metadata type %T", metadata)}
 	}
