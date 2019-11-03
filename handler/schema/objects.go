@@ -2,6 +2,7 @@ package schema
 
 import (
 	"dynamic-graphql-api/handler/schema/graph"
+	"fmt"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ var (
 func createObjects(g *graph.Graph) {
 	g.Nodes().FilterObjects().ForEach(func(obj *graph.Node) bool {
 		objName := obj.GetAttrValueDefault("name", "")
+
+		fmt.Printf("Adding object %s ...\n", objName)
 
 		graphqlObjects[objName] = graphql.NewObject(graphql.ObjectConfig{
 			Name:   objName,
@@ -120,7 +123,7 @@ func getGraphQLTypeFromField(g *graph.Graph, field *graph.Node) (graphql.Output,
 		referencedObjectName := referencedObject.GetAttrValueDefault("name", "")
 
 		var graphqlType graphql.Output
-		var graphqlArgs graphql.FieldConfigArgument
+		graphqlArgs := graphql.FieldConfigArgument{}
 		switch field.GetAttrValueDefault("referenceType", "") {
 		case "forward":
 			graphqlType = graphqlObjects[referencedObjectName]
@@ -148,11 +151,14 @@ func addFields(g *graph.Graph) error {
 
 		g.Edges().FilterSource(obj).FilterEdgeType("objectHasField").Targets().ForEach(func(field *graph.Node) bool {
 			fieldName := field.GetAttrValueDefault("name", "")
+
 			fieldType, fieldArgs, errTemp := getGraphQLTypeFromField(g, field)
 			if errTemp != nil {
 				err = errTemp
 				return false
 			}
+
+			fmt.Printf("Adding field %s.%s:%s ...\n", objName, fieldName, fieldType.Name())
 
 			graphqlObjects[objName].AddFieldConfig(fieldName, &graphql.Field{
 				Type: fieldType,

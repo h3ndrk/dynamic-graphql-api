@@ -25,7 +25,7 @@ func (g *Graph) addObjectDirectFields(table *Node, object *Node) error {
 			// field that references other object
 			foreignKeyTable := foreignKeyTables.Targets().First()
 			foreignKeyColumn := foreignKeyColumns.Targets().First()
-			referencedObject := g.Edges().FilterTarget(foreignKeyTable).FilterEdgeType("objectHasTable").Targets().First()
+			referencedObject := g.Edges().FilterTarget(foreignKeyTable).FilterEdgeType("objectHasTable").Sources().First()
 			if referencedObject == nil {
 				err = errors.Errorf("missing object for table %+v", foreignKeyTable.Attrs)
 				return false
@@ -108,7 +108,7 @@ func (g *Graph) addObjectBackReferenceFields() error {
 		referencedTable := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesTable").Targets().First()
 		referencedColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesColumn").Targets().First()
 		if fieldTable != nil && fieldColumn != nil && referencedTable != nil && referencedColumn != nil {
-			referencedObject := g.Edges().FilterTarget(referencedTable).FilterEdgeType("objectHasTable").Targets().First()
+			referencedObject := g.Edges().FilterTarget(referencedTable).FilterEdgeType("objectHasTable").Sources().First()
 			if referencedObject == nil {
 				err = errors.Errorf("missing object for table %+v", referencedTable.Attrs)
 				return false
@@ -184,8 +184,8 @@ func (g *Graph) addObjectJoinedReferenceFields() error {
 		}
 
 		referencedObjects := map[*Node]*Node{
-			columns[0]: g.Edges().FilterTarget(referencedTables[columns[0]]).FilterEdgeType("objectHasTable").Targets().First(),
-			columns[1]: g.Edges().FilterTarget(referencedTables[columns[1]]).FilterEdgeType("objectHasTable").Targets().First(),
+			columns[0]: g.Edges().FilterTarget(referencedTables[columns[0]]).FilterEdgeType("objectHasTable").Sources().First(),
+			columns[1]: g.Edges().FilterTarget(referencedTables[columns[1]]).FilterEdgeType("objectHasTable").Sources().First(),
 		}
 		if referencedObjects[columns[0]] == nil || referencedObjects[columns[1]] == nil {
 			err = errors.Errorf("failed to find referenced objects of table %+v", table.Attrs)
@@ -254,10 +254,10 @@ func (g *Graph) addObjectJoinedReferenceFields() error {
 		})
 
 		// edges to reference others objects
-		g.addEdge(fields[columns[0]], fields[columns[1]], map[string]string{
+		g.addEdge(fields[columns[0]], referencedObjects[columns[1]], map[string]string{
 			"type": "fieldReferencesObject",
 		})
-		g.addEdge(fields[columns[1]], fields[columns[0]], map[string]string{
+		g.addEdge(fields[columns[1]], referencedObjects[columns[0]], map[string]string{
 			"type": "fieldReferencesObject",
 		})
 
