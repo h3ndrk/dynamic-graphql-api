@@ -86,7 +86,7 @@ func createObjects(g *graph.Graph) {
 	})
 }
 
-func getGraphQLTypeFromField(g *graph.Graph, field *graph.Node) (graphql.Output, graphql.FieldConfigArgument, error) {
+func getScalarGraphqlTypeFromField(g *graph.Graph, field *graph.Node) (graphql.Output, error) {
 	if field.HasAttrKey("valueType") {
 		valueType := field.GetAttrValueDefault("valueType", "")
 		valueTypeWithoutNonNull := strings.TrimSuffix(valueType, "!")
@@ -107,15 +107,21 @@ func getGraphQLTypeFromField(g *graph.Graph, field *graph.Node) (graphql.Output,
 		case "DateTime":
 			graphqlType = graphql.DateTime
 		default:
-			return nil, nil, errors.Errorf("unsupported type %s", valueType)
+			return nil, errors.Errorf("unsupported type %s", valueType)
 		}
 
 		if isNonNull {
 			graphqlType = graphql.NewNonNull(graphqlType)
 		}
 
-		return graphqlType, graphql.FieldConfigArgument{}, nil
-	} else if field.HasAttrKey("referenceType") {
+		return graphqlType, nil
+	}
+
+	return nil, errors.Errorf("unknown scalar type of field %+v", field.Attrs)
+}
+
+func getReferenceGraphqlTypeFromField(g *graph.Graph, field *graph.Node) (graphql.Output, graphql.FieldConfigArgument, error) {
+	if field.HasAttrKey("referenceType") {
 		referencedObject := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesObject").Targets().First()
 		if referencedObject == nil {
 			return nil, nil, errors.Errorf("field %+v does not reference object", field.Attrs)
@@ -144,6 +150,15 @@ func getGraphQLTypeFromField(g *graph.Graph, field *graph.Node) (graphql.Output,
 	return nil, nil, errors.Errorf("unknown type of field %+v", field.Attrs)
 }
 
+func getGraphqlTypeFromField(g *graph.Graph, field *graph.Node) (graphql.Output, graphql.FieldConfigArgument, error) {
+	if field.HasAttrKey("valueType") {
+		fieldType, err := getScalarGraphqlTypeFromField(g, field)
+		return fieldType, graphql.FieldConfigArgument{}, err
+	}
+
+	return getReferenceGraphqlTypeFromField(g, field)
+}
+
 func addFields(g *graph.Graph) error {
 	var err error
 	g.Nodes().FilterObjects().ForEach(func(obj *graph.Node) bool {
@@ -152,7 +167,7 @@ func addFields(g *graph.Graph) error {
 		g.Edges().FilterSource(obj).FilterEdgeType("objectHasField").Targets().ForEach(func(field *graph.Node) bool {
 			fieldName := field.GetAttrValueDefault("name", "")
 
-			fieldType, fieldArgs, errTemp := getGraphQLTypeFromField(g, field)
+			fieldType, fieldArgs, errTemp := getGraphqlTypeFromField(g, field)
 			if errTemp != nil {
 				err = errTemp
 				return false
