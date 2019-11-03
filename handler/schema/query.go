@@ -14,8 +14,39 @@ var query *graphql.Object
 
 func initQuery(g *graph.Graph) error {
 	query = graphql.NewObject(graphql.ObjectConfig{
-		Name:   "Query",
-		Fields: graphql.Fields{},
+		Name: "Query",
+		Fields: graphql.Fields{
+			"node": &graphql.Field{
+				Type: node,
+				Args: graphql.FieldConfigArgument{
+					"id": &graphql.ArgumentConfig{
+						Type:        graphql.NewNonNull(graphql.ID),
+						Description: "The ID of an object",
+					},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					cI, ok := p.Args["id"]
+					if !ok {
+						return nil, errors.New("missing id cursor")
+					}
+
+					cS, ok := cI.(string)
+					if !ok {
+						return nil, errors.Errorf("malformed id cursor '%v'", cI)
+					}
+
+					c, err := parseCursor(cS)
+					if err != nil {
+						return nil, errors.Wrapf(err, "failed to parse cursor '%s'", cS)
+					}
+					if c == nil {
+						return nil, errors.Errorf("unexpected parsed nil cursor '%s'", cS)
+					}
+
+					return *c, nil
+				},
+			},
+		},
 	})
 
 	var err error
