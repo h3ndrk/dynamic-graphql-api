@@ -286,6 +286,11 @@ func addFields(g *graph.Graph) error {
 					}
 
 					if field.GetAttrValueDefault("referenceType", "") == "backward" {
+						before, after, first, last, err := getConnectionArgs(p, objName)
+						if err != nil {
+							return nil, err
+						}
+
 						result := db.PaginationQuery(db.PaginationRequest{
 							Ctx: p.Context,
 							DB:  dbFromContext,
@@ -297,7 +302,10 @@ func addFields(g *graph.Graph) error {
 								OwnReferenceColumn:     c.id,
 							},
 
-							// TODO: arguments
+							Before: before,
+							After:  after,
+							First:  first,
+							Last:   last,
 						})
 						if result.Err != nil {
 							return nil, result.Err
@@ -323,6 +331,11 @@ func addFields(g *graph.Graph) error {
 					}
 
 					if field.GetAttrValueDefault("referenceType", "") == "joined" {
+						before, after, first, last, err := getConnectionArgs(p, objName)
+						if err != nil {
+							return nil, err
+						}
+
 						result := db.PaginationQuery(db.PaginationRequest{
 							Ctx: p.Context,
 							DB:  dbFromContext,
@@ -334,7 +347,10 @@ func addFields(g *graph.Graph) error {
 								OwnValue:      c.id,
 							},
 
-							// TODO: arguments
+							Before: before,
+							After:  after,
+							First:  first,
+							Last:   last,
 						})
 						if result.Err != nil {
 							return nil, result.Err

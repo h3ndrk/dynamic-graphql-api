@@ -38,6 +38,11 @@ func initQuery(g *graph.Graph) error {
 					return nil, err
 				}
 
+				before, after, first, last, err := getConnectionArgs(p, objName)
+				if err != nil {
+					return nil, err
+				}
+
 				result := db.PaginationQuery(db.PaginationRequest{
 					Ctx: p.Context,
 					DB:  dbFromContext,
@@ -47,7 +52,10 @@ func initQuery(g *graph.Graph) error {
 						Column: "id",
 					},
 
-					// TODO: arguments
+					Before: before,
+					After:  after,
+					First:  first,
+					Last:   last,
 				})
 				if result.Err != nil {
 					return nil, result.Err
