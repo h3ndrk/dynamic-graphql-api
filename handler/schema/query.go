@@ -12,15 +12,22 @@ import (
 
 var query *graphql.Object
 
-func initQuery(g *graph.Graph) {
+func initQuery(g *graph.Graph) error {
 	query = graphql.NewObject(graphql.ObjectConfig{
 		Name:   "Query",
 		Fields: graphql.Fields{},
 	})
 
+	var err error
 	g.Nodes().FilterObjects().ForEach(func(obj *graph.Node) bool {
 		objName := obj.GetAttrValueDefault("name", "")
 		fieldName := inflection.Plural(strcase.ToLowerCamel(objName))
+
+		referencedTable := g.Edges().FilterSource(obj).FilterEdgeType("objectHasTable").Targets().First()
+		if referencedTable == nil {
+			err = errors.New("referenced table not found")
+			return false
+		}
 
 		query.AddFieldConfig(fieldName, &graphql.Field{
 			Type: graphql.NewNonNull(graphqlConnections[objName]),
@@ -29,11 +36,6 @@ func initQuery(g *graph.Graph) {
 				dbFromContext, err := getDBFromContext(p.Context)
 				if err != nil {
 					return nil, err
-				}
-
-				referencedTable := g.Edges().FilterSource(obj).FilterEdgeType("objectHasTable").Targets().First()
-				if referencedTable == nil {
-					return nil, errors.New("referenced table not found")
 				}
 
 				result := db.PaginationQuery(db.PaginationRequest{
@@ -69,4 +71,6 @@ func initQuery(g *graph.Graph) {
 
 		return true
 	})
+
+	return err
 }

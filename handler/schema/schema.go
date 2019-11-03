@@ -37,7 +37,9 @@ func NewSchema(sqls []string) (*graphql.Schema, error) {
 	if err := initObjects(objectGraph); err != nil {
 		return nil, err
 	}
-	initQuery(objectGraph)
+	if err := initQuery(objectGraph); err != nil {
+		return nil, err
+	}
 
 	schema, err := graphql.NewSchema(graphql.SchemaConfig{Query: query /*, Mutation: mutation*/})
 	if err != nil {

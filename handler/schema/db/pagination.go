@@ -54,7 +54,6 @@ func min(a, b uint) uint {
 
 // PaginationQuery queries the database and returns a page of result ids.
 func PaginationQuery(r PaginationRequest) PaginationResult {
-	// SELECT {{ .Column }} FROM {{ .Table }}
 	if r.First != nil && r.Last != nil {
 		// reset last
 		r.Last = nil

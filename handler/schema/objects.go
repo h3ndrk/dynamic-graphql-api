@@ -1,10 +1,10 @@
 package schema
 
 import (
+	"dynamic-graphql-api/handler/schema/db"
 	"dynamic-graphql-api/handler/schema/graph"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/graphql-go/graphql"
 	"github.com/pkg/errors"
@@ -158,6 +158,17 @@ func addFields(g *graph.Graph) error {
 				return false
 			}
 
+			referencedTable := g.Edges().FilterSource(field).FilterEdgeType("fieldHasTable").Targets().First()
+			if field.HasAttrKey("valueType") && referencedTable == nil {
+				err = errors.Errorf("referenced table not found while resolving field %s.%s:%s", objName, fieldName, fieldType.Name())
+				return false
+			}
+			referencedColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldHasColumn").Targets().First()
+			if field.HasAttrKey("valueType") && referencedColumn == nil {
+				err = errors.Errorf("referenced column not found while resolving field %s.%s:%s", objName, fieldName, fieldType.Name())
+				return false
+			}
+
 			fmt.Printf("Adding field %s.%s:%s ...\n", objName, fieldName, fieldType.Name())
 
 			graphqlObjects[objName].AddFieldConfig(fieldName, &graphql.Field{
@@ -169,24 +180,64 @@ func addFields(g *graph.Graph) error {
 						return nil, errors.New("Malformed source")
 					}
 
+					dbFromContext, err := getDBFromContext(p.Context)
+					if err != nil {
+						return nil, err
+					}
+
 					switch fieldType.Name() {
 					case "Int", "Int!":
-						// TODO: get Int at cursor from DB (sql.NullInt64)
-						return 42, nil
+						return db.ScalarIntQuery(db.ScalarRequest{
+							Ctx: p.Context,
+							DB:  dbFromContext,
+
+							Table:  referencedTable.GetAttrValueDefault("name", ""),
+							Column: referencedColumn.GetAttrValueDefault("name", ""),
+
+							ID: cursor.id,
+						})
 					case "Float", "Float!":
-						// TODO: get Float at cursor from DB (sql.NullFloat64)
-						return 42.1337, nil
+						return db.ScalarFloatQuery(db.ScalarRequest{
+							Ctx: p.Context,
+							DB:  dbFromContext,
+
+							Table:  referencedTable.GetAttrValueDefault("name", ""),
+							Column: referencedColumn.GetAttrValueDefault("name", ""),
+
+							ID: cursor.id,
+						})
 					case "String", "String!":
-						// TODO: get String at cursor from DB (sql.NullString)
-						return "Hello World!", nil
+						return db.ScalarStringQuery(db.ScalarRequest{
+							Ctx: p.Context,
+							DB:  dbFromContext,
+
+							Table:  referencedTable.GetAttrValueDefault("name", ""),
+							Column: referencedColumn.GetAttrValueDefault("name", ""),
+
+							ID: cursor.id,
+						})
 					case "Boolean", "Boolean!":
-						// TODO: get Boolean at cursor from DB (sql.NullBool)
-						return true, nil
+						return db.ScalarBooleanQuery(db.ScalarRequest{
+							Ctx: p.Context,
+							DB:  dbFromContext,
+
+							Table:  referencedTable.GetAttrValueDefault("name", ""),
+							Column: referencedColumn.GetAttrValueDefault("name", ""),
+
+							ID: cursor.id,
+						})
 					case "ID", "ID!":
 						return cursor.OpaqueString(), nil
 					case "DateTime", "DateTime!":
-						// TODO: get DateTime at cursor from DB (sql.NullDateTime)
-						return time.Now(), nil
+						return db.ScalarDateTimeQuery(db.ScalarRequest{
+							Ctx: p.Context,
+							DB:  dbFromContext,
+
+							Table:  referencedTable.GetAttrValueDefault("name", ""),
+							Column: referencedColumn.GetAttrValueDefault("name", ""),
+
+							ID: cursor.id,
+						})
 					}
 
 					return nil, nil
