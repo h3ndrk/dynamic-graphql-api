@@ -46,6 +46,8 @@ func initQuery(g *graph.Graph) error {
 						Table:  referencedTable.GetAttrValueDefault("name", ""),
 						Column: "id",
 					},
+
+					// TODO: arguments
 				})
 				if result.Err != nil {
 					return nil, result.Err

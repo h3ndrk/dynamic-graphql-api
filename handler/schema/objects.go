@@ -281,6 +281,8 @@ func addFields(g *graph.Graph) error {
 								ForeignReturnColumn:    "id",
 								OwnReferenceColumn:     c.id,
 							},
+
+							// TODO: arguments
 						})
 						if result.Err != nil {
 							return nil, result.Err
