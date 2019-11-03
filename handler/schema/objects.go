@@ -45,12 +45,12 @@ func createObjects(g *graph.Graph) {
 					Type:        graphql.NewNonNull(graphql.String),
 					Description: "A cursor for use in pagination.",
 					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-						cursor, ok := p.Source.(cursor)
+						c, ok := p.Source.(cursor)
 						if !ok {
 							return nil, errors.New("malformed source")
 						}
 
-						return cursor.OpaqueString(), nil
+						return c.OpaqueString(), nil
 					},
 				},
 			},
@@ -175,7 +175,7 @@ func addFields(g *graph.Graph) error {
 				Type: fieldType,
 				Args: fieldArgs,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					cursor, ok := p.Source.(cursor)
+					c, ok := p.Source.(cursor)
 					if !ok {
 						return nil, errors.New("Malformed source")
 					}
@@ -194,7 +194,7 @@ func addFields(g *graph.Graph) error {
 							Table:  referencedTable.GetAttrValueDefault("name", ""),
 							Column: referencedColumn.GetAttrValueDefault("name", ""),
 
-							ID: cursor.id,
+							ID: c.id,
 						})
 					case "Float", "Float!":
 						return db.ScalarFloatQuery(db.ScalarRequest{
@@ -204,7 +204,7 @@ func addFields(g *graph.Graph) error {
 							Table:  referencedTable.GetAttrValueDefault("name", ""),
 							Column: referencedColumn.GetAttrValueDefault("name", ""),
 
-							ID: cursor.id,
+							ID: c.id,
 						})
 					case "String", "String!":
 						return db.ScalarStringQuery(db.ScalarRequest{
@@ -214,7 +214,7 @@ func addFields(g *graph.Graph) error {
 							Table:  referencedTable.GetAttrValueDefault("name", ""),
 							Column: referencedColumn.GetAttrValueDefault("name", ""),
 
-							ID: cursor.id,
+							ID: c.id,
 						})
 					case "Boolean", "Boolean!":
 						return db.ScalarBooleanQuery(db.ScalarRequest{
@@ -224,10 +224,10 @@ func addFields(g *graph.Graph) error {
 							Table:  referencedTable.GetAttrValueDefault("name", ""),
 							Column: referencedColumn.GetAttrValueDefault("name", ""),
 
-							ID: cursor.id,
+							ID: c.id,
 						})
 					case "ID", "ID!":
-						return cursor.OpaqueString(), nil
+						return c.OpaqueString(), nil
 					case "DateTime", "DateTime!":
 						return db.ScalarDateTimeQuery(db.ScalarRequest{
 							Ctx: p.Context,
@@ -236,8 +236,29 @@ func addFields(g *graph.Graph) error {
 							Table:  referencedTable.GetAttrValueDefault("name", ""),
 							Column: referencedColumn.GetAttrValueDefault("name", ""),
 
-							ID: cursor.id,
+							ID: c.id,
 						})
+					}
+
+					if field.GetAttrValueDefault("referenceType", "") == "forward" {
+						fmt.Printf("querying %s.%s for resolving %s.%s:%s\n", referencedTable.GetAttrValueDefault("name", ""), referencedColumn.GetAttrValueDefault("name", ""), objName, fieldName, fieldType.Name())
+						id, err := db.ScalarIntQuery(db.ScalarRequest{
+							Ctx: p.Context,
+							DB:  dbFromContext,
+
+							Table:  referencedTable.GetAttrValueDefault("name", ""),
+							Column: referencedColumn.GetAttrValueDefault("name", ""),
+
+							ID: c.id,
+						})
+						if err != nil {
+							return nil, err
+						}
+						if id, ok := id.(int64); ok {
+							return cursor{object: objName, id: uint(id)}, nil
+						}
+
+						return nil, nil
 					}
 
 					return nil, nil
