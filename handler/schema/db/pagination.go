@@ -9,6 +9,7 @@ import (
 	"github.com/pkg/errors"
 )
 
+// PaginationRequest describes the query.
 type PaginationRequest struct {
 	Ctx context.Context
 	DB  *sql.DB
@@ -22,6 +23,7 @@ type PaginationRequest struct {
 	Last   *uint
 }
 
+// PaginationResult represents the response from a database pagination query.
 type PaginationResult struct {
 	Err error
 
