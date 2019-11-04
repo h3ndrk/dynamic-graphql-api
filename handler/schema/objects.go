@@ -208,6 +208,15 @@ func addFields(g *graph.Graph) error {
 				err = errors.Errorf("referenced foreign join column not found while resolving field %s.%s:%s", objName, fieldName, fieldType.Name())
 				return false
 			}
+			referencedObject := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesObject").Targets().First()
+			if field.GetAttrValueDefault("referenceType", "") == "joined" && referencedObject == nil {
+				err = errors.Errorf("referenced object not found while resolving field %s.%s:%s", objName, fieldName, fieldType.Name())
+				return false
+			}
+			var referencedObjectName string
+			if referencedObject != nil {
+				referencedObjectName = referencedObject.GetAttrValueDefault("name", "")
+			}
 
 			fmt.Printf("Adding field %s.%s:%s ...\n", objName, fieldName, fieldType.Name())
 
@@ -294,7 +303,7 @@ func addFields(g *graph.Graph) error {
 							return nil, err
 						}
 						if id, ok := id.(int64); ok {
-							return cursor{object: objName, id: uint(id)}, nil
+							return cursor{object: referencedObjectName, id: uint(id)}, nil
 						}
 
 						return nil, nil
@@ -328,7 +337,7 @@ func addFields(g *graph.Graph) error {
 
 						var conn connection
 						for _, id := range result.IDs {
-							conn.edges = append(conn.edges, cursor{object: objName, id: id})
+							conn.edges = append(conn.edges, cursor{object: referencedObjectName, id: id})
 						}
 
 						if len(conn.edges) > 0 {
@@ -373,7 +382,7 @@ func addFields(g *graph.Graph) error {
 
 						var conn connection
 						for _, id := range result.IDs {
-							conn.edges = append(conn.edges, cursor{object: objName, id: id})
+							conn.edges = append(conn.edges, cursor{object: referencedObjectName, id: id})
 						}
 
 						if len(conn.edges) > 0 {
