@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// MutationRequest describes the query.
-type MutationRequest struct {
+// MutationCreateRequest describes the query.
+type MutationCreateRequest struct {
 	Ctx context.Context
 	DB  *sql.DB
 
@@ -17,7 +17,7 @@ type MutationRequest struct {
 }
 
 // MutationCreateQuery creates a row in the database and returns the created id.
-func MutationCreateQuery(r MutationRequest) (uint, error) {
+func MutationCreateQuery(r MutationCreateRequest) (uint, error) {
 	var columnNames []string
 	var columnValueStrings []string
 	var columnValues []interface{}
@@ -41,4 +41,43 @@ func MutationCreateQuery(r MutationRequest) (uint, error) {
 	}
 
 	return uint(insertedID), nil
+}
+
+// MutationUpdateRequest describes the query.
+type MutationUpdateRequest struct {
+	Ctx context.Context
+	DB  *sql.DB
+
+	Table                string
+	ColumnValues         map[string]interface{}
+	ColumnWithPrimaryKey string
+}
+
+// MutationUpdateQuery updates a row in the database.
+func MutationUpdateQuery(r MutationUpdateRequest) error {
+	var columnExprs []string
+	var columnValues []interface{}
+
+	var columnID string
+	var columnIDValue interface{}
+
+	for name, value := range r.ColumnValues {
+		if name == r.ColumnWithPrimaryKey {
+			columnID = name
+			columnIDValue = value
+		} else {
+			columnExprs = append(columnExprs, fmt.Sprintf("%s = ?", name))
+			columnValues = append(columnValues, value)
+		}
+	}
+
+	_, err := r.DB.ExecContext(
+		r.Ctx,
+		fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?", r.Table, strings.Join(columnExprs, ", "), columnID),
+		append(columnValues, columnIDValue)...)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

@@ -18,7 +18,7 @@ type mutationPayload struct {
 	c                cursor
 }
 
-func getMutationGraphqlTypeFromField(g *graph.Graph, field *graph.Node) (graphql.Output, graphql.Output, graphql.Output, error) {
+func getMutationGraphqlTypeFromField(g *graph.Graph, field *graph.Node) (graphql.Output, graphql.Output, graphql.Output, string, error) {
 	//           | create         | update         | delete
 	// ----------+----------------+----------------+---------
 	// Int       | Int            | Int            | omit
@@ -39,9 +39,10 @@ func getMutationGraphqlTypeFromField(g *graph.Graph, field *graph.Node) (graphql
 	// joined    | separate       | separate       | omit
 
 	var (
-		createType graphql.Output
-		updateType graphql.Output
-		deleteType graphql.Output
+		createType           graphql.Output
+		updateType           graphql.Output
+		deleteType           graphql.Output
+		referencedObjectName string
 	)
 	if field.HasAttrKey("valueType") {
 		valueType := field.GetAttrValueDefault("valueType", "")
@@ -68,13 +69,19 @@ func getMutationGraphqlTypeFromField(g *graph.Graph, field *graph.Node) (graphql
 			createType = graphql.DateTime
 			updateType = graphql.DateTime
 		default:
-			return nil, nil, nil, errors.Errorf("unsupported type %s", valueTypeWithoutNonNull)
+			return nil, nil, nil, "", errors.Errorf("unsupported type %s", valueTypeWithoutNonNull)
 		}
 
 		if valueTypeWithoutNonNull != "ID" && isNonNull {
 			createType = graphql.NewNonNull(createType)
 		}
 	} else if field.HasAttrKey("referenceType") {
+		referencedObject := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesObject").Targets().First()
+		if referencedObject == nil {
+			return nil, nil, nil, "", errors.Errorf("field %+v does not reference object", field.Attrs)
+		}
+		referencedObjectName = referencedObject.GetAttrValueDefault("name", "")
+
 		if field.GetAttrValueDefault("referenceType", "") == "forward" {
 			createType = graphql.ID
 			updateType = graphql.ID
@@ -85,14 +92,16 @@ func getMutationGraphqlTypeFromField(g *graph.Graph, field *graph.Node) (graphql
 		}
 	}
 
-	return createType, updateType, deleteType, nil
+	return createType, updateType, deleteType, referencedObjectName, nil
 }
 
 type mutationField struct {
-	fieldConfigCreate *graphql.InputObjectFieldConfig
-	fieldConfigUpdate *graphql.InputObjectFieldConfig
-	fieldConfigDelete *graphql.InputObjectFieldConfig
-	column            string
+	fieldConfigCreate    *graphql.InputObjectFieldConfig
+	fieldConfigUpdate    *graphql.InputObjectFieldConfig
+	fieldConfigDelete    *graphql.InputObjectFieldConfig
+	column               string
+	isPrimaryKey         bool
+	referencedObjectName string
 }
 
 func getMutationFields(g *graph.Graph, fields []*graph.Node) (map[string]mutationField, error) {
@@ -118,12 +127,16 @@ func getMutationFields(g *graph.Graph, fields []*graph.Node) (map[string]mutatio
 			return nil, errors.New("failed to find field's column")
 		}
 
-		fieldTypeCreate, fieldTypeUpdate, fieldTypeDelete, err := getMutationGraphqlTypeFromField(g, field)
+		fieldTypeCreate, fieldTypeUpdate, fieldTypeDelete, referencedObjectName, err := getMutationGraphqlTypeFromField(g, field)
 		if err != nil {
 			return nil, err
 		}
 
-		fieldDefinition := mutationField{column: column.GetAttrValueDefault("name", "")}
+		fieldDefinition := mutationField{
+			column:               column.GetAttrValueDefault("name", ""),
+			isPrimaryKey:         column.GetAttrValueDefault("isPrimaryKey", "false") == "true",
+			referencedObjectName: referencedObjectName,
+		}
 		if fieldTypeCreate != nil {
 			fieldDefinition.fieldConfigCreate = &graphql.InputObjectFieldConfig{
 				Type: fieldTypeCreate,
@@ -283,7 +296,28 @@ func initMutation(g *graph.Graph) error {
 					}
 
 					if fieldDefinition, ok := mutationFields[name]; ok && fieldDefinition.fieldConfigCreate != nil {
-						columns[fieldDefinition.column] = inputField
+						valueType := fieldDefinition.fieldConfigCreate.Type.Name()
+						valueTypeWithoutNonNull := strings.TrimSuffix(valueType, "!")
+						if valueTypeWithoutNonNull == "ID" {
+							inputFieldString, ok := inputField.(string)
+							if !ok {
+								return nil, errors.Errorf("unknown id type of field %s", name)
+							}
+							c, err := parseCursor(inputFieldString)
+							if err != nil {
+								return nil, err
+							}
+							if fieldDefinition.isPrimaryKey && c.object != objName {
+								return nil, errors.Errorf("unexpected id type %s of field %s (expected %s)", c.object, name, objName)
+							}
+							if !fieldDefinition.isPrimaryKey && c.object != fieldDefinition.referencedObjectName {
+								return nil, errors.Errorf("unexpected id type %s of field %s (expected %s)", c.object, name, fieldDefinition.referencedObjectName)
+							}
+
+							columns[fieldDefinition.column] = c.id
+						} else {
+							columns[fieldDefinition.column] = inputField
+						}
 					} else {
 						return nil, errors.Errorf("unexpected input field %s", name)
 					}
@@ -300,7 +334,7 @@ func initMutation(g *graph.Graph) error {
 					}
 				}
 
-				insertedID, err := db.MutationCreateQuery(db.MutationRequest{
+				insertedID, err := db.MutationCreateQuery(db.MutationCreateRequest{
 					Ctx: p.Context,
 					DB:  dbFromContext,
 
@@ -331,7 +365,95 @@ func initMutation(g *graph.Graph) error {
 				},
 			},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				return nil, nil
+				inputInterface, ok := p.Args["input"]
+				if !ok {
+					return nil, errors.New("missing input")
+				}
+				input, ok := inputInterface.(map[string]interface{})
+				if !ok {
+					return nil, errors.New("malformed input")
+				}
+
+				dbFromContext, err := getDBFromContext(p.Context)
+				if err != nil {
+					return nil, err
+				}
+
+				// check inputs availability (required & defined)
+				var columnWithPrimaryKey string
+				columns := map[string]interface{}{}
+				for name, inputField := range input {
+					if name == "clientMutationId" {
+						continue
+					}
+
+					if fieldDefinition, ok := mutationFields[name]; ok && fieldDefinition.fieldConfigUpdate != nil {
+						valueType := fieldDefinition.fieldConfigUpdate.Type.Name()
+						valueTypeWithoutNonNull := strings.TrimSuffix(valueType, "!")
+						if valueTypeWithoutNonNull == "ID" {
+							inputFieldString, ok := inputField.(string)
+							if !ok {
+								return nil, errors.Errorf("unknown id type of field %s", name)
+							}
+							c, err := parseCursor(inputFieldString)
+							if err != nil {
+								return nil, err
+							}
+							if fieldDefinition.isPrimaryKey && c.object != objName {
+								return nil, errors.Errorf("unexpected id type %s of field %s (expected %s)", c.object, name, objName)
+							}
+							if !fieldDefinition.isPrimaryKey && c.object != fieldDefinition.referencedObjectName {
+								return nil, errors.Errorf("unexpected id type %s of field %s (expected %s)", c.object, name, fieldDefinition.referencedObjectName)
+							}
+
+							columns[fieldDefinition.column] = c.id
+						} else {
+							columns[fieldDefinition.column] = inputField
+						}
+						if fieldDefinition.isPrimaryKey {
+							columnWithPrimaryKey = name
+						}
+					} else {
+						return nil, errors.Errorf("unexpected input field %s", name)
+					}
+				}
+				for name, fieldDefinition := range mutationFields {
+					if fieldDefinition.fieldConfigUpdate == nil {
+						continue
+					}
+
+					if _, ok := fieldDefinition.fieldConfigUpdate.Type.(*graphql.NonNull); ok {
+						if _, ok := input[name]; !ok {
+							return nil, errors.Errorf("missing required input field %s", name)
+						}
+					}
+				}
+				if columnWithPrimaryKey == "" {
+					return nil, errors.New("missing identification field")
+				}
+
+				err = db.MutationUpdateQuery(db.MutationUpdateRequest{
+					Ctx: p.Context,
+					DB:  dbFromContext,
+
+					Table:                referencedTable.GetAttrValueDefault("name", ""),
+					ColumnValues:         columns,
+					ColumnWithPrimaryKey: columnWithPrimaryKey,
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				var payload mutationPayload
+				payload.c = cursor{object: objName, id: columns[columnWithPrimaryKey].(uint)}
+
+				if clientMutationID, ok := input["clientMutationId"]; ok {
+					if clientMutationID, ok := clientMutationID.(string); ok {
+						payload.clientMutationID = clientMutationID
+					}
+				}
+
+				return payload, nil
 			},
 		})
 		mutation.AddFieldConfig(inflection.Singular(strcase.ToLowerCamel("delete_"+objName)), &graphql.Field{
