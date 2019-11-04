@@ -81,3 +81,26 @@ func MutationUpdateQuery(r MutationUpdateRequest) error {
 
 	return nil
 }
+
+// MutationDeleteRequest describes the query.
+type MutationDeleteRequest struct {
+	Ctx context.Context
+	DB  *sql.DB
+
+	Table       string
+	ColumnName  string
+	ColumnValue interface{}
+}
+
+// MutationDeleteQuery deletes a row from the database.
+func MutationDeleteQuery(r MutationDeleteRequest) error {
+	_, err := r.DB.ExecContext(
+		r.Ctx,
+		fmt.Sprintf("DELETE FROM %s WHERE %s = ?", r.Table, r.ColumnName),
+		r.ColumnValue)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

@@ -464,7 +464,90 @@ func initMutation(g *graph.Graph) error {
 				},
 			},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				return nil, nil
+				inputInterface, ok := p.Args["input"]
+				if !ok {
+					return nil, errors.New("missing input")
+				}
+				input, ok := inputInterface.(map[string]interface{})
+				if !ok {
+					return nil, errors.New("malformed input")
+				}
+
+				dbFromContext, err := getDBFromContext(p.Context)
+				if err != nil {
+					return nil, err
+				}
+
+				// check inputs availability (required & defined)
+				var (
+					columnName  string
+					columnValue interface{}
+				)
+				for name, inputField := range input {
+					if name == "clientMutationId" {
+						continue
+					}
+
+					if fieldDefinition, ok := mutationFields[name]; ok && fieldDefinition.fieldConfigDelete != nil {
+						valueType := fieldDefinition.fieldConfigDelete.Type.Name()
+						valueTypeWithoutNonNull := strings.TrimSuffix(valueType, "!")
+						if valueTypeWithoutNonNull == "ID" && fieldDefinition.isPrimaryKey {
+							inputFieldString, ok := inputField.(string)
+							if !ok {
+								return nil, errors.Errorf("unknown id type of field %s", name)
+							}
+							c, err := parseCursor(inputFieldString)
+							if err != nil {
+								return nil, err
+							}
+							if c.object != objName {
+								return nil, errors.Errorf("unexpected id type %s of field %s (expected %s)", c.object, name, objName)
+							}
+
+							columnName = fieldDefinition.column
+							columnValue = c.id
+						} // else: ignore other fields
+					} else {
+						return nil, errors.Errorf("unexpected input field %s", name)
+					}
+				}
+				for name, fieldDefinition := range mutationFields {
+					if fieldDefinition.fieldConfigDelete == nil {
+						continue
+					}
+
+					if _, ok := fieldDefinition.fieldConfigDelete.Type.(*graphql.NonNull); ok {
+						if _, ok := input[name]; !ok {
+							return nil, errors.Errorf("missing required input field %s", name)
+						}
+					}
+				}
+				if columnName == "" {
+					return nil, errors.New("missing identification field")
+				}
+
+				err = db.MutationDeleteQuery(db.MutationDeleteRequest{
+					Ctx: p.Context,
+					DB:  dbFromContext,
+
+					Table:       referencedTable.GetAttrValueDefault("name", ""),
+					ColumnName:  columnName,
+					ColumnValue: columnValue,
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				var payload mutationPayload
+				// skipping payload.c because Delete*Payload ignores it
+
+				if clientMutationID, ok := input["clientMutationId"]; ok {
+					if clientMutationID, ok := clientMutationID.(string); ok {
+						payload.clientMutationID = clientMutationID
+					}
+				}
+
+				return payload, nil
 			},
 		})
 
