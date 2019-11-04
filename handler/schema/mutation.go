@@ -207,8 +207,6 @@ func addMutationAssociations(g *graph.Graph, obj *graph.Node) error {
 			return true
 		}
 
-		// disassociateMutationName := strcase.ToLowerCamel("disassociate_" + associationName)
-
 		input := graphql.NewInputObject(graphql.InputObjectConfig{
 			Name: strcase.ToCamel("association_" + associationName + "_input"),
 			Fields: graphql.InputObjectConfigFieldMap{
@@ -424,18 +422,8 @@ func addMutationAssociations(g *graph.Graph, obj *graph.Node) error {
 			},
 		})
 
-		// if _, ok := mutation.Fields()[disassociateMutationName]; !ok {
-		// 	fmt.Printf("add %s mutation\n", disassociateMutationName)
-		// }
-
 		return true
 	})
-	// skip if mutation already exists
-	// create input object (associate/disassociate)
-	// create payload object (associate/disassociate)
-	// create mutation (associate/disassociate)
-	// mutation.AddFieldConfig()
-	// _, ok := mutation.Fields()["foo"]
 
 	return err
 }
