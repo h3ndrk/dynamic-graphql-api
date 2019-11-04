@@ -1,13 +1,9 @@
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/go-test/deep v1.0.4 h1:u2CU3YKy9I2pmu9pX0eq50wCgjfGIt539SqR7FbHiho=
-github.com/go-test/deep v1.0.4/go.mod h1:wGDj63lr65AM2AQyKZd/NYHGb0R+1RLqB8NKt3aSFNA=
 github.com/graphql-go/graphql v0.7.8 h1:769CR/2JNAhLG9+aa8pfLkKdR0H+r5lsQqling5WwpU=
 github.com/graphql-go/graphql v0.7.8/go.mod h1:k6yrAYQaSP59DC5UVxbgxESlmVyojThKdORUqGDGmrI=
 github.com/graphql-go/handler v0.2.3 h1:CANh8WPnl5M9uA25c2GBhPqJhE53Fg0Iue/fRNla71E=
 github.com/graphql-go/handler v0.2.3/go.mod h1:leLF6RpV5uZMN1CdImAxuiayrYYhOk33bZciaUGaXeU=
-github.com/h3ndrk/dynamic-graphql-api v0.0.0-20191102111435-287f3380000b h1:JHV5UV6elCs70YQFmSvQHsFNWo093WhN3lpJ8Z7LEJU=
-github.com/h3ndrk/dynamic-graphql-api v0.0.0-20191102111435-287f3380000b/go.mod h1:VHQ5hkfjZ6tRbhgxLWmArltg4WhBS3MxTcMIqPUwdSc=
 github.com/h3ndrk/go-sqlite-createtable-parser v1.0.0 h1:3DzPDqh9NYnYxMGKIhVVWs1mPdyRomgTZ8Ytgigmg3Y=
 github.com/h3ndrk/go-sqlite-createtable-parser v1.0.0/go.mod h1:U4yvXj5rr5BK3Z79eOR2x8OTmGvyp0ekpzPIjcJjE0U=
 github.com/iancoleman/strcase v0.0.0-20190422225806-e506e3ef7365 h1:ECW73yc9MY7935nNYXUkK7Dz17YuSUI9yqRqYS8aBww=
