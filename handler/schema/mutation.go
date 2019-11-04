@@ -2,7 +2,6 @@ package schema
 
 import (
 	"dynamic-graphql-api/handler/schema/graph"
-	"fmt"
 	"strings"
 
 	"github.com/graphql-go/graphql"
@@ -88,6 +87,66 @@ func getMutationGraphqlTypeFromField(g *graph.Graph, field *graph.Node) (graphql
 	return createType, updateType, deleteType, nil
 }
 
+type mutationField struct {
+	fieldConfigCreate *graphql.InputObjectFieldConfig
+	fieldConfigUpdate *graphql.InputObjectFieldConfig
+	fieldConfigDelete *graphql.InputObjectFieldConfig
+	column            string
+}
+
+func getMutationFields(g *graph.Graph, fields []*graph.Node) (map[string]mutationField, error) {
+	mutationFields := map[string]mutationField{}
+
+	for _, field := range fields {
+		if !field.HasAttrKey("valueType") && field.GetAttrValueDefault("referenceType", "") != "forward" {
+			continue
+		}
+
+		fieldName := field.GetAttrValueDefault("name", "")
+
+		if field.GetAttrValueDefault("referenceType", "") == "forward" {
+			referencedColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesColumn").Targets().First()
+			if referencedColumn == nil {
+				return nil, errors.New("failed to find referenced column")
+			}
+			fieldName = strcase.ToLowerCamel(fieldName + "_" + referencedColumn.GetAttrValueDefault("name", ""))
+		}
+
+		column := g.Edges().FilterSource(field).FilterEdgeType("fieldHasColumn").Targets().First()
+		if column == nil {
+			return nil, errors.New("failed to find field's column")
+		}
+
+		fieldTypeCreate, fieldTypeUpdate, fieldTypeDelete, err := getMutationGraphqlTypeFromField(g, field)
+		if err != nil {
+			return nil, err
+		}
+
+		fieldDefinition := mutationField{column: column.GetAttrValueDefault("name", "")}
+		if fieldTypeCreate != nil {
+			fieldDefinition.fieldConfigCreate = &graphql.InputObjectFieldConfig{
+				Type: fieldTypeCreate,
+			}
+		}
+		if fieldTypeUpdate != nil {
+			fieldDefinition.fieldConfigUpdate = &graphql.InputObjectFieldConfig{
+				Type: fieldTypeUpdate,
+			}
+		}
+		if fieldTypeDelete != nil {
+			fieldDefinition.fieldConfigDelete = &graphql.InputObjectFieldConfig{
+				Type: fieldTypeDelete,
+			}
+		}
+
+		if fieldDefinition.fieldConfigCreate != nil || fieldDefinition.fieldConfigUpdate != nil || fieldDefinition.fieldConfigDelete != nil {
+			mutationFields[fieldName] = fieldDefinition
+		}
+	}
+
+	return nil, nil
+}
+
 func initMutation(g *graph.Graph) error {
 	mutation = graphql.NewObject(graphql.ObjectConfig{
 		Name:   "Mutation",
@@ -102,44 +161,23 @@ func initMutation(g *graph.Graph) error {
 		inputFieldsUpdate := graphql.InputObjectConfigFieldMap{}
 		inputFieldsDelete := graphql.InputObjectConfigFieldMap{}
 
-		g.Edges().FilterSource(obj).FilterEdgeType("objectHasField").Targets().ForEach(func(field *graph.Node) bool {
-			fieldName := field.GetAttrValueDefault("name", "")
+		mutationFields, errTemp := getMutationFields(g, g.Edges().FilterSource(obj).FilterEdgeType("objectHasField").Targets().All())
+		if err != nil {
+			err = errTemp
+			return false
+		}
 
-			if field.GetAttrValueDefault("referenceType", "") == "forward" {
-				referencedColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesColumn").Targets().First()
-				if referencedColumn == nil {
-					err = errors.New("failed to find referenced column")
-					return false
-				}
-				fieldName = strcase.ToLowerCamel(fieldName + "_" + referencedColumn.GetAttrValueDefault("name", ""))
+		for name, fieldDefinition := range mutationFields {
+			if fieldDefinition.fieldConfigCreate != nil {
+				inputFieldsCreate[name] = fieldDefinition.fieldConfigCreate
 			}
-
-			fieldTypeCreate, fieldTypeUpdate, fieldTypeDelete, errTemp := getMutationGraphqlTypeFromField(g, field)
-			if errTemp != nil {
-				err = errTemp
-				return false
+			if fieldDefinition.fieldConfigUpdate != nil {
+				inputFieldsUpdate[name] = fieldDefinition.fieldConfigUpdate
 			}
-
-			fmt.Printf("%s.%s: %+v %+v %+v\n", objName, fieldName, fieldTypeCreate, fieldTypeUpdate, fieldTypeDelete)
-
-			if fieldTypeCreate != nil {
-				inputFieldsCreate[fieldName] = &graphql.InputObjectFieldConfig{
-					Type: fieldTypeCreate,
-				}
+			if fieldDefinition.fieldConfigDelete != nil {
+				inputFieldsDelete[name] = fieldDefinition.fieldConfigDelete
 			}
-			if fieldTypeUpdate != nil {
-				inputFieldsUpdate[fieldName] = &graphql.InputObjectFieldConfig{
-					Type: fieldTypeUpdate,
-				}
-			}
-			if fieldTypeDelete != nil {
-				inputFieldsDelete[fieldName] = &graphql.InputObjectFieldConfig{
-					Type: fieldTypeDelete,
-				}
-			}
-
-			return true
-		})
+		}
 
 		inputFieldsCreate["clientMutationId"] = &graphql.InputObjectFieldConfig{
 			Type: graphql.NewNonNull(graphql.String),
