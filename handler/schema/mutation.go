@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"dynamic-graphql-api/handler/schema/db"
 	"dynamic-graphql-api/handler/schema/graph"
 	"strings"
 
@@ -144,7 +145,7 @@ func getMutationFields(g *graph.Graph, fields []*graph.Node) (map[string]mutatio
 		}
 	}
 
-	return nil, nil
+	return mutationFields, nil
 }
 
 func initMutation(g *graph.Graph) error {
@@ -260,7 +261,66 @@ func initMutation(g *graph.Graph) error {
 				},
 			},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				return nil, nil
+				inputInterface, ok := p.Args["input"]
+				if !ok {
+					return nil, errors.New("missing input")
+				}
+				input, ok := inputInterface.(map[string]interface{})
+				if !ok {
+					return nil, errors.New("malformed input")
+				}
+
+				dbFromContext, err := getDBFromContext(p.Context)
+				if err != nil {
+					return nil, err
+				}
+
+				// check inputs availability (required & defined)
+				columns := map[string]interface{}{}
+				for name, inputField := range input {
+					if name == "clientMutationId" {
+						continue
+					}
+
+					if fieldDefinition, ok := mutationFields[name]; ok && fieldDefinition.fieldConfigCreate != nil {
+						columns[fieldDefinition.column] = inputField
+					} else {
+						return nil, errors.Errorf("unexpected input field %s", name)
+					}
+				}
+				for name, fieldDefinition := range mutationFields {
+					if fieldDefinition.fieldConfigCreate == nil {
+						continue
+					}
+
+					if _, ok := fieldDefinition.fieldConfigCreate.Type.(*graphql.NonNull); ok {
+						if _, ok := input[name]; !ok {
+							return nil, errors.Errorf("missing required input field %s", name)
+						}
+					}
+				}
+
+				insertedID, err := db.MutationCreateQuery(db.MutationRequest{
+					Ctx: p.Context,
+					DB:  dbFromContext,
+
+					Table:        referencedTable.GetAttrValueDefault("name", ""),
+					ColumnValues: columns,
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				var payload mutationPayload
+				payload.c = cursor{object: objName, id: insertedID}
+
+				if clientMutationID, ok := input["clientMutationId"]; ok {
+					if clientMutationID, ok := clientMutationID.(string); ok {
+						payload.clientMutationID = clientMutationID
+					}
+				}
+
+				return payload, nil
 			},
 		})
 		mutation.AddFieldConfig(inflection.Singular(strcase.ToLowerCamel("update_"+objName)), &graphql.Field{
