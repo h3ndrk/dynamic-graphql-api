@@ -3,6 +3,7 @@ package schema
 import (
 	"dynamic-graphql-api/handler/schema/db"
 	"dynamic-graphql-api/handler/schema/graph"
+	"fmt"
 	"strings"
 
 	"github.com/graphql-go/graphql"
@@ -16,6 +17,7 @@ var mutation *graphql.Object
 type mutationPayload struct {
 	clientMutationID string
 	c                cursor
+	referencedC      cursor
 }
 
 func getMutationGraphqlTypeFromField(g *graph.Graph, field *graph.Node) (graphql.Output, graphql.Output, graphql.Output, string, error) {
@@ -159,6 +161,283 @@ func getMutationFields(g *graph.Graph, fields []*graph.Node) (map[string]mutatio
 	}
 
 	return mutationFields, nil
+}
+
+func addMutationAssociations(g *graph.Graph, obj *graph.Node) error {
+	objName := obj.GetAttrValueDefault("name", "")
+
+	// iterate over fields, filter joined references
+	var err error
+	g.Edges().FilterSource(obj).FilterEdgeType("objectHasField").Targets().ForEach(func(field *graph.Node) bool {
+		fieldName := field.GetAttrValueDefault("name", "")
+
+		if field.GetAttrValueDefault("referenceType", "") != "joined" {
+			return true
+		}
+
+		referencedObject := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesObject").Targets().First()
+		if referencedObject == nil {
+			err = errors.Errorf("missing reference to object from joined field %s.%s", objName, fieldName)
+			return false
+		}
+		referencedObjectName := referencedObject.GetAttrValueDefault("name", "")
+
+		joinTable := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesJoinTable").Targets().First()
+		if joinTable == nil {
+			err = errors.New("join table not found")
+			return false
+		}
+		ownColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesOwnJoinColumn").Targets().First()
+		if ownColumn == nil {
+			err = errors.New("own column not found")
+			return false
+		}
+		foreignColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesForeignJoinColumn").Targets().First()
+		if foreignColumn == nil {
+			err = errors.New("foreign column not found")
+			return false
+		}
+
+		fmt.Printf("Found field with joined mutation: %s.%s -> %s\n", objName, fieldName, referencedObjectName)
+
+		associationName := inflection.Singular(objName) + "_" + inflection.Singular(referencedObjectName)
+		if objName > referencedObjectName {
+			// only create mutation where objName and referenceObjectName are alphabetically ordered
+			// so that we can use the names later
+			return true
+		}
+
+		// disassociateMutationName := strcase.ToLowerCamel("disassociate_" + associationName)
+
+		input := graphql.NewInputObject(graphql.InputObjectConfig{
+			Name: strcase.ToCamel("association_" + associationName + "_input"),
+			Fields: graphql.InputObjectConfigFieldMap{
+				"clientMutationId": &graphql.InputObjectFieldConfig{
+					Type: graphql.NewNonNull(graphql.String),
+				},
+				strcase.ToLowerCamel(objName + "_id"): &graphql.InputObjectFieldConfig{
+					Type: graphql.NewNonNull(graphql.ID),
+				},
+				strcase.ToLowerCamel(referencedObjectName + "_id"): &graphql.InputObjectFieldConfig{
+					Type: graphql.NewNonNull(graphql.ID),
+				},
+			},
+		})
+
+		payload := graphql.NewObject(graphql.ObjectConfig{
+			Name: strcase.ToCamel("association_" + associationName + "_payload"),
+			Fields: graphql.Fields{
+				"clientMutationId": &graphql.Field{
+					Type: graphql.NewNonNull(graphql.String),
+					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+						payload, ok := p.Source.(mutationPayload)
+						if !ok {
+							return nil, errors.New("malformed source")
+						}
+
+						return payload.clientMutationID, nil
+					},
+				},
+				strcase.ToLowerCamel(objName): &graphql.Field{
+					Type: graphql.NewNonNull(graphqlObjects[objName]),
+					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+						payload, ok := p.Source.(mutationPayload)
+						if !ok {
+							return nil, errors.New("malformed source")
+						}
+
+						return payload.c, nil
+					},
+				},
+				strcase.ToLowerCamel(referencedObjectName): &graphql.Field{
+					Type: graphql.NewNonNull(graphqlObjects[referencedObjectName]),
+					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+						payload, ok := p.Source.(mutationPayload)
+						if !ok {
+							return nil, errors.New("malformed source")
+						}
+
+						return payload.referencedC, nil
+					},
+				},
+			},
+		})
+
+		mutation.AddFieldConfig(strcase.ToLowerCamel("associate_"+associationName), &graphql.Field{
+			Type: graphql.NewNonNull(payload),
+			Args: graphql.FieldConfigArgument{
+				"input": &graphql.ArgumentConfig{
+					Type: graphql.NewNonNull(input),
+				},
+			},
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				inputInterface, ok := p.Args["input"]
+				if !ok {
+					return nil, errors.New("missing input")
+				}
+				input, ok := inputInterface.(map[string]interface{})
+				if !ok {
+					return nil, errors.New("malformed input")
+				}
+
+				dbFromContext, err := getDBFromContext(p.Context)
+				if err != nil {
+					return nil, err
+				}
+
+				var (
+					objID              uint
+					referencedObjectID uint
+				)
+				if inputField, ok := input[strcase.ToLowerCamel(objName+"_id")]; ok {
+					if inputField, ok := inputField.(string); ok {
+						c, err := parseCursor(inputField)
+						if err != nil {
+							return nil, err
+						}
+						if c.object != objName {
+							return nil, errors.Errorf("unexpected id type %s of field (expected %s)", c.object, objName)
+						}
+
+						objID = c.id
+					}
+				}
+				if inputField, ok := input[strcase.ToLowerCamel(referencedObjectName+"_id")]; ok {
+					if inputField, ok := inputField.(string); ok {
+						c, err := parseCursor(inputField)
+						if err != nil {
+							return nil, err
+						}
+						if c.object != referencedObjectName {
+							return nil, errors.Errorf("unexpected id type %s of field (expected %s)", c.object, objName)
+						}
+
+						referencedObjectID = c.id
+					}
+				}
+
+				err = db.MutationAssociateQuery(db.MutationAssociateRequest{
+					Ctx: p.Context,
+					DB:  dbFromContext,
+
+					Table: joinTable.GetAttrValueDefault("name", ""),
+					ColumnValues: map[string]interface{}{
+						ownColumn.GetAttrValueDefault("name", ""):     objID,
+						foreignColumn.GetAttrValueDefault("name", ""): referencedObjectID,
+					},
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				var payload mutationPayload
+				payload.c = cursor{object: objName, id: objID}
+				payload.referencedC = cursor{object: referencedObjectName, id: referencedObjectID}
+
+				if clientMutationID, ok := input["clientMutationId"]; ok {
+					if clientMutationID, ok := clientMutationID.(string); ok {
+						payload.clientMutationID = clientMutationID
+					}
+				}
+
+				return payload, nil
+			},
+		})
+		mutation.AddFieldConfig(strcase.ToLowerCamel("disassociate_"+associationName), &graphql.Field{
+			Type: graphql.NewNonNull(payload),
+			Args: graphql.FieldConfigArgument{
+				"input": &graphql.ArgumentConfig{
+					Type: graphql.NewNonNull(input),
+				},
+			},
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				inputInterface, ok := p.Args["input"]
+				if !ok {
+					return nil, errors.New("missing input")
+				}
+				input, ok := inputInterface.(map[string]interface{})
+				if !ok {
+					return nil, errors.New("malformed input")
+				}
+
+				dbFromContext, err := getDBFromContext(p.Context)
+				if err != nil {
+					return nil, err
+				}
+
+				var (
+					objID              uint
+					referencedObjectID uint
+				)
+				if inputField, ok := input[strcase.ToLowerCamel(objName+"_id")]; ok {
+					if inputField, ok := inputField.(string); ok {
+						c, err := parseCursor(inputField)
+						if err != nil {
+							return nil, err
+						}
+						if c.object != objName {
+							return nil, errors.Errorf("unexpected id type %s of field (expected %s)", c.object, objName)
+						}
+
+						objID = c.id
+					}
+				}
+				if inputField, ok := input[strcase.ToLowerCamel(referencedObjectName+"_id")]; ok {
+					if inputField, ok := inputField.(string); ok {
+						c, err := parseCursor(inputField)
+						if err != nil {
+							return nil, err
+						}
+						if c.object != referencedObjectName {
+							return nil, errors.Errorf("unexpected id type %s of field (expected %s)", c.object, objName)
+						}
+
+						referencedObjectID = c.id
+					}
+				}
+
+				err = db.MutationDisassociateQuery(db.MutationDisassociateRequest{
+					Ctx: p.Context,
+					DB:  dbFromContext,
+
+					Table: joinTable.GetAttrValueDefault("name", ""),
+					ColumnValues: map[string]interface{}{
+						ownColumn.GetAttrValueDefault("name", ""):     objID,
+						foreignColumn.GetAttrValueDefault("name", ""): referencedObjectID,
+					},
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				var payload mutationPayload
+				payload.c = cursor{object: objName, id: objID}
+				payload.referencedC = cursor{object: referencedObjectName, id: referencedObjectID}
+
+				if clientMutationID, ok := input["clientMutationId"]; ok {
+					if clientMutationID, ok := clientMutationID.(string); ok {
+						payload.clientMutationID = clientMutationID
+					}
+				}
+
+				return payload, nil
+			},
+		})
+
+		// if _, ok := mutation.Fields()[disassociateMutationName]; !ok {
+		// 	fmt.Printf("add %s mutation\n", disassociateMutationName)
+		// }
+
+		return true
+	})
+	// skip if mutation already exists
+	// create input object (associate/disassociate)
+	// create payload object (associate/disassociate)
+	// create mutation (associate/disassociate)
+	// mutation.AddFieldConfig()
+	// _, ok := mutation.Fields()["foo"]
+
+	return err
 }
 
 func initMutation(g *graph.Graph) error {
@@ -551,8 +830,18 @@ func initMutation(g *graph.Graph) error {
 			},
 		})
 
+		err = addMutationAssociations(g, obj)
+		if err != nil {
+			return false
+		}
+
 		return true
 	})
+
+	fmt.Printf("Mutations:\n")
+	for name := range mutation.Fields() {
+		fmt.Printf("  %s\n", name)
+	}
 
 	return err
 }
