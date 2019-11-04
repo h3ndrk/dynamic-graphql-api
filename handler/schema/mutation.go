@@ -105,6 +105,15 @@ func initMutation(g *graph.Graph) error {
 		g.Edges().FilterSource(obj).FilterEdgeType("objectHasField").Targets().ForEach(func(field *graph.Node) bool {
 			fieldName := field.GetAttrValueDefault("name", "")
 
+			if field.GetAttrValueDefault("referenceType", "") == "forward" {
+				referencedColumn := g.Edges().FilterSource(field).FilterEdgeType("fieldReferencesColumn").Targets().First()
+				if referencedColumn == nil {
+					err = errors.New("failed to find referenced column")
+					return false
+				}
+				fieldName = strcase.ToLowerCamel(fieldName + "_" + referencedColumn.GetAttrValueDefault("name", ""))
+			}
+
 			fieldTypeCreate, fieldTypeUpdate, fieldTypeDelete, errTemp := getMutationGraphqlTypeFromField(g, field)
 			if errTemp != nil {
 				err = errTemp
