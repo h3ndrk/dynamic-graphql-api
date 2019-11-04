@@ -155,74 +155,47 @@ func initMutation(g *graph.Graph) error {
 			Fields: inputFieldsDelete,
 		})
 
+		payloadClientMutationIDField := &graphql.Field{
+			Type: graphql.NewNonNull(graphql.String),
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				payload, ok := p.Source.(mutationPayload)
+				if !ok {
+					return nil, errors.New("malformed source")
+				}
+
+				return payload.clientMutationID, nil
+			},
+		}
+		payloadObjectField := &graphql.Field{
+			Type: graphql.NewNonNull(graphqlObjects[objName]),
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				payload, ok := p.Source.(mutationPayload)
+				if !ok {
+					return nil, errors.New("malformed source")
+				}
+
+				return payload.c, nil
+			},
+		}
+
 		payloadCreate := graphql.NewObject(graphql.ObjectConfig{
 			Name: "Create" + objName + "Payload",
 			Fields: graphql.Fields{
-				"clientMutationId": &graphql.Field{
-					Type: graphql.NewNonNull(graphql.String),
-					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-						payload, ok := p.Source.(mutationPayload)
-						if !ok {
-							return nil, errors.New("malformed source")
-						}
-
-						return payload.clientMutationID, nil
-					},
-				},
-				strcase.ToLowerCamel(objName): &graphql.Field{
-					Type: graphql.NewNonNull(graphqlObjects[objName]),
-					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-						payload, ok := p.Source.(mutationPayload)
-						if !ok {
-							return nil, errors.New("malformed source")
-						}
-
-						return payload.c, nil
-					},
-				},
+				"clientMutationId":            payloadClientMutationIDField,
+				strcase.ToLowerCamel(objName): payloadObjectField,
 			},
 		})
 		payloadUpdate := graphql.NewObject(graphql.ObjectConfig{
 			Name: "Update" + objName + "Payload",
 			Fields: graphql.Fields{
-				"clientMutationId": &graphql.Field{
-					Type: graphql.NewNonNull(graphql.String),
-					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-						payload, ok := p.Source.(mutationPayload)
-						if !ok {
-							return nil, errors.New("malformed source")
-						}
-
-						return payload.clientMutationID, nil
-					},
-				},
-				strcase.ToLowerCamel(objName): &graphql.Field{
-					Type: graphql.NewNonNull(graphqlObjects[objName]),
-					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-						payload, ok := p.Source.(mutationPayload)
-						if !ok {
-							return nil, errors.New("malformed source")
-						}
-
-						return payload.c, nil
-					},
-				},
+				"clientMutationId":            payloadClientMutationIDField,
+				strcase.ToLowerCamel(objName): payloadObjectField,
 			},
 		})
 		payloadDelete := graphql.NewObject(graphql.ObjectConfig{
 			Name: "Delete" + objName + "Payload",
 			Fields: graphql.Fields{
-				"clientMutationId": &graphql.Field{
-					Type: graphql.NewNonNull(graphql.String),
-					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-						payload, ok := p.Source.(mutationPayload)
-						if !ok {
-							return nil, errors.New("malformed source")
-						}
-
-						return payload.clientMutationID, nil
-					},
-				},
+				"clientMutationId": payloadClientMutationIDField,
 			},
 		})
 
