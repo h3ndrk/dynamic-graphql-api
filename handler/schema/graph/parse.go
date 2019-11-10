@@ -101,7 +101,7 @@ func (g *Graph) addStmtTable(t *parse.Table) error {
 	if t.Name == nil {
 		return errors.New("unexpected nil table name")
 	}
-	if strings.HasPrefix("sqlite_", *t.Name) {
+	if strings.HasPrefix(*t.Name, "sqlite_") {
 		// ignore built-in sqlite-tables
 		return nil
 	}
