@@ -1,6 +1,8 @@
 package graph
 
 import (
+	"strings"
+
 	parse "github.com/h3ndrk/go-sqlite-createtable-parser"
 	"github.com/pkg/errors"
 )
@@ -98,6 +100,10 @@ func (g *Graph) addStmtColumn(table *Node, column *parse.Column, tableConstraint
 func (g *Graph) addStmtTable(t *parse.Table) error {
 	if t.Name == nil {
 		return errors.New("unexpected nil table name")
+	}
+	if strings.HasPrefix("sqlite_", *t.Name) {
+		// ignore built-in sqlite-tables
+		return nil
 	}
 
 	table := g.addNode(map[string]string{
